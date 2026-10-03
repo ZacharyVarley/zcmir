@@ -459,6 +459,9 @@ h3.cap:first-child { margin-top: 4px; }
 .statusbar #busy { color: var(--accent); font-feature-settings: "tnum"; white-space: nowrap; }
 .statusbar #btn-cancel { height: 20px; padding: 0 8px; font-size: 11.5px; }
 .statusbar #status-extra { white-space: nowrap; color: var(--faint); }
+.statusbar .compiling { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); white-space: nowrap; font-feature-settings: "tnum"; }
+.compiling .bar { width: 72px; height: 4px; border-radius: 2px; background: var(--raise); overflow: hidden; }
+.compiling .bar i { display: block; height: 100%; width: calc(var(--p, 0) * 100%); background: var(--accent); transition: width .12s linear; }
 .log {
   border-top: 1px solid var(--line); background: var(--well);
   font: 12px/1.45 var(--mono); color: #9e9e96;

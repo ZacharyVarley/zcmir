@@ -664,6 +664,26 @@ function visMask() {
 
 const KP_MAX_TITLE = "Draw at most this many (a random subsample, so correspondences stay readable).";
 
+// Pipeline compiles in the status bar: shown once a burst outlasts 150 ms, so a single quick
+// compile does not flash.
+let compilePending = false, compileShowTimer = 0;
+function showCompiling({ done, total }) {
+  const el = $("compiling");
+  if (!el) return;
+  compilePending = done < total;
+  if (!compilePending) {
+    clearTimeout(compileShowTimer);
+    compileShowTimer = 0;
+    el.hidden = true;
+    return;
+  }
+  $("compiling-txt").textContent = `compiling WebGPU shaders ${done} / ${total}`;
+  $("compiling-bar").style.setProperty("--p", String(done / total));
+  if (el.hidden && !compileShowTimer) {
+    compileShowTimer = setTimeout(() => { compileShowTimer = 0; el.hidden = !compilePending; }, 150);
+  }
+}
+
 function kpScale(kp) {
   const s = kp?.[3];
   return Number.isFinite(s) && s > 0 ? s : 1;
@@ -1350,7 +1370,7 @@ async function main() {
   chip("loading zcmir…");
   log("loading zcmir…");
   zc = await withTimeout(
-    Zcmir.create({ wasm: new URL("../zcmir/zcmir.wasm", import.meta.url) }),
+    Zcmir.create({ wasm: new URL("../zcmir/zcmir.wasm", import.meta.url), onCompile: showCompiling }),
     30000,
     "Timed out creating the zcmir engine",
   );

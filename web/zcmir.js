@@ -22,6 +22,8 @@ const utf8enc = new TextEncoder();
 // the next load starts compiling all of them in parallel while the page sets up, so the first
 // detect / match / map finds them ready. The list belongs to one build of zcmir.wasm (its
 // fingerprint), so a new build starts a new list. `warm: false` in Zcmir.create turns this off.
+// A first visit starts from a list shipped with the site (`pipelines.json` beside the wasm,
+// recorded by tests/test_web.mjs --save-pipelines) when it belongs to the same build.
 const WARM_KEY = "zcmir.pipelines.v1";
 const WARM_MAX = 400;
 
@@ -38,11 +40,22 @@ function hashBytes(bytes) {
   return (h >>> 0).toString(36) + "." + u.length.toString(36);
 }
 
-function loadWarm(fp) {
+function loadWarm() {
+  try { return JSON.parse(localStorage.getItem(WARM_KEY)); } catch { return null; }
+}
+
+async function fetchWarm(url) {
   try {
-    const saved = JSON.parse(localStorage.getItem(WARM_KEY));
-    return saved?.fp === fp ? saved : null;
+    const r = await fetch(url);
+    return r.ok ? await r.json() : null;
   } catch { return null; }
+}
+
+function warmRecord(w) {
+  const list = w.list.slice(-WARM_MAX);
+  const codes = {};
+  for (const [h] of list) codes[h] = w.codes.get(h);
+  return { fp: w.fp, codes, list };
 }
 
 function saveWarm(state) {
@@ -50,11 +63,7 @@ function saveWarm(state) {
   if (!w || w.timer) return;
   w.timer = setTimeout(() => {
     w.timer = null;
-    const list = w.list.slice(-WARM_MAX);
-    const used = new Set(list.map(([h]) => h));
-    const codes = {};
-    for (const h of used) codes[h] = w.codes.get(h);
-    try { localStorage.setItem(WARM_KEY, JSON.stringify({ fp: w.fp, codes, list })); } catch { /* quota: skip */ }
+    try { localStorage.setItem(WARM_KEY, JSON.stringify(warmRecord(w))); } catch { /* quota: skip */ }
   }, 1500);
 }
 
@@ -145,11 +154,18 @@ function gpuImports(state) {
     if (!module) { module = device.createShaderModule({ code }); modules.set(code, module); }
     return module;
   };
+  // Compile progress for onCompile listeners: counts restart once everything started has finished.
+  const cp = state.compiling;
+  const told = () => { for (const fn of cp.listeners) try { fn({ done: cp.done, total: cp.total }); } catch (e) { console.error(e); } };
   const compile = (code, h, entryPoint) => {
     const key = h + "/" + entryPoint;
     let c = compiled.get(key);
     if (!c) {
+      if (cp.done === cp.total) cp.done = cp.total = 0;
+      cp.total++;
+      told();
       c = device.createComputePipelineAsync({ label: entryPoint, layout: "auto", compute: { module: moduleOf(code), entryPoint } });
+      c.finally(() => { cp.done++; told(); }).catch(() => {});
       compiled.set(key, c);
     }
     return c;
@@ -321,7 +337,7 @@ const RS = [["n", "u32", 0], ["nTh", "u32", 4], ["nLam", "u32", 8], ["peakIndex"
 
 export class Zcmir {
   /** Load the module and open a high-performance device with the limits the maps need. */
-  static async create({ wasm = new URL("../zig-out/web/zcmir.wasm", import.meta.url), device = null, warm = true } = {}) {
+  static async create({ wasm = new URL("../zig-out/web/zcmir.wasm", import.meta.url), device = null, warm = true, onCompile = null } = {}) {
     let info = "";
     if (!device) {
       const adapter = await navigator.gpu?.requestAdapter({ powerPreference: "high-performance" });
@@ -333,11 +349,23 @@ export class Zcmir {
       const ai = adapter.info || {};
       info = `${ai.vendor || "gpu"} ${ai.architecture || ai.device || ""}`.trim();
     }
-    const state = { device, memory: null, reads: [], errors: [], info, listeners: [], stats: newStats() };
+    const compiling = { done: 0, total: 0, listeners: onCompile ? [onCompile] : [] };
+    const state = { device, memory: null, reads: [], errors: [], info, listeners: [], stats: newStats(), compiling };
+    const warmOn = warm && typeof localStorage !== "undefined";
+    // This origin's own list when it belongs to this build; else the shipped one, downloaded
+    // alongside the wasm on a first visit (or after the wasm changed).
+    const own = warmOn ? loadWarm() : null;
+    const shippedUrl = new URL("pipelines.json", new URL(wasm, location.href));
+    const shipped = warmOn && !own ? fetchWarm(shippedUrl) : null;
     const bytes = await (await fetch(wasm)).arrayBuffer();
-    if (warm && typeof localStorage !== "undefined") {
+    if (warmOn) {
       const fp = hashBytes(bytes);
-      state.warm = { fp, saved: loadWarm(fp), codes: new Map(), list: [], timer: null };
+      let saved = own?.fp === fp ? own : null;
+      if (!saved) {
+        const ship = await (shipped || fetchWarm(shippedUrl));
+        saved = ship?.fp === fp ? ship : null;
+      }
+      state.warm = { fp, saved, codes: new Map(), list: [], timer: null };
     }
     const env = {
       zc_log(ptr, len) { console.warn("zcmir:", utf8.decode(new Uint8Array(state.memory.buffer, ptr, len))); },
@@ -368,6 +396,17 @@ export class Zcmir {
   }
 
   get device() { return this.state.device; }
+
+  /** Call fn({ done, total }) as pipelines compile (total counts the current burst). */
+  onCompile(fn) {
+    this.state.compiling.listeners.push(fn);
+    fn({ done: this.state.compiling.done, total: this.state.compiling.total });
+  }
+
+  /** The pipelines this page created, as the warm-up list (pipelines.json) records them. */
+  warmList() {
+    return this.state.warm ? warmRecord(this.state.warm) : null;
+  }
 
   /** GPU traffic since the last call (dispatches, submits, reads, waits and the time suspended
    *  in them, pipelines created and the time that took), then reset. */

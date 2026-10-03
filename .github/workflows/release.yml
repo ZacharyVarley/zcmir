@@ -4,11 +4,13 @@ name: release
 # cross-compiles every platform), the wheels are installed and tested on Linux, Windows and macOS
 # (M1: every shader, the Python API, the tutorials and the web app on a GPU), then published to
 # PyPI (trusted publishing, no token), attached with the site and the executed tutorials to a
-# GitHub Release, and deployed to GitHub Pages (the app at zacharyvarley.github.io/zcmir/, the
-# tutorials under tutorials/). Run by hand (workflow_dispatch) it builds and tests only.
+# GitHub Release, and deployed to GitHub Pages (the app at zacharyvarley.github.io/zcmir/ with the
+# pipelines the M1's browser run compiled as its first-visit warm-up, the tutorials under
+# tutorials/). Run by hand (workflow_dispatch) it builds and tests only.
 #
 # Before the first release: on PyPI, add a trusted publisher for this repository with workflow
-# "release.yml" and environment "pypi"; in the repository settings, create the environment "pypi".
+# "release.yml" and environment "pypi"; in the repository settings, create the environment "pypi",
+# set Pages' source to GitHub Actions and let tags v* deploy to the environment "github-pages".
 # The tag must equal __version__ in python/zcmir/__init__.py (and src/engine.zig's version).
 
 on:
@@ -132,9 +134,11 @@ jobs:
         shell: bash
         run: cp tests/test_api.py "$RUNNER_TEMP/" && cd "$RUNNER_TEMP" && "$PY" test_api.py
 
-      - name: Web app in headless Chrome (WebGPU)
+      - name: Web app in headless Chrome (WebGPU), recording the pipelines it compiles
         if: matrix.os == 'macos-14'
-        run: node tests/test_web.mjs --dir out/web
+        run: |
+          mkdir -p "$RUNNER_TEMP/pipelines"
+          node tests/test_web.mjs --dir out/web --save-pipelines "$RUNNER_TEMP/pipelines/pipelines.json"
 
       - name: Tutorials (examples/ run as notebooks on the installed wheel)
         if: matrix.os == 'macos-14'
@@ -148,6 +152,12 @@ jobs:
         with:
           name: tutorials
           path: ${{ runner.temp }}/tutorials
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'macos-14'
+        with:
+          name: pipelines
+          path: ${{ runner.temp }}/pipelines
 
   pypi:
     needs: test
@@ -192,11 +202,17 @@ jobs:
           name: tutorials
           path: tutorials
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: pipelines
+          path: pipelines
+
       - name: Assemble the site
         run: |
           mkdir -p site/tutorials
           cp -r out/web/. site/
           cp tutorials/* site/tutorials/
+          cp pipelines/pipelines.json site/zcmir/  # the first-visit warm-up (web/zcmir.js)
 
       - uses: actions/upload-pages-artifact@v5
         with:

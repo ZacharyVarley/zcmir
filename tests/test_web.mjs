@@ -5,12 +5,15 @@
 //   node tests/test_web.mjs                        the repo's app (zig build wasm first)
 //   node tests/test_web.mjs --dir dist/web         a built site
 //   CHROME=/path/to/chrome node tests/test_web.mjs
+//   node tests/test_web.mjs --dir dist/web --save-pipelines dist/web/zcmir/pipelines.json
+//                                                  … and record the pipelines it compiled: the
+//                                                  site's first-visit warm-up (web/zcmir.js)
 //
 // A pair: the Landsat example (known ground truth) → Auto → the pose against the truth.
 // A stack: two IN718 sections as a stack → Register stack → the export, whose ZIP entries'
 // checksums and TIFF page counts are verified. Fails on any error the page logs.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +21,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 const dir = args.includes("--dir") ? args[args.indexOf("--dir") + 1] : null;
+const savePipelines = args.includes("--save-pipelines") ? args[args.indexOf("--save-pipelines") + 1] : null;
 const port = 4300 + Math.floor(Math.random() * 500);
 const appUrl = `http://127.0.0.1:${port}/${dir ? "" : "web/app/"}`;
 
@@ -164,6 +168,12 @@ try {
 
   const errs = await evaluate(`return document.getElementById("log").textContent.split("\\n").filter((l) => /error|failed|invalid/i.test(l)).slice(0, 5);`);
   check("no errors in the log", errs.length === 0, errs.join(" | "));
+
+  if (savePipelines) {
+    const rec = await evaluate(`return window.cmir.zc.warmList();`);
+    check("the pipelines it compiled", rec?.list?.length > 0, `${rec?.list?.length} pipelines → ${savePipelines}`);
+    if (rec?.list?.length) writeFileSync(savePipelines, JSON.stringify(rec));
+  }
 } catch (e) {
   check("the browser run", false, String(e.stack || e));
 } finally {

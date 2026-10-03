@@ -23,7 +23,7 @@ const Gpu = gpu_mod.Gpu;
 const Buf = gpu_mod.Buf;
 pub const Settings = settings_mod.Settings;
 
-pub const version = "0.1.0";
+pub const version = "0.1.1";
 
 /// Result of a shift map. Lags are in fixed-image pixels: translating the moving image by
 /// (−dx, −dy) after H moves it onto the peak (the browser app's "shift hop"), i.e. the corrected

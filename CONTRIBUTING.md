@@ -99,6 +99,7 @@ Changes to the registration should keep these passing. Report accuracy against g
   - Buffers are allocated once and grown, and features stay on the GPU between calls.
   - Dispatches are batched into few submits.
   - Readbacks are few and batched: each costs about 3 ms in a browser.
+  - Pipelines compile on first use, in parallel, and only a readback waits for them. The browser adapter remembers which ones a site used and starts compiling them as the page loads; a first visit starts from the shipped `pipelines.json` of the same build. The app shows compiles in the status bar.
   - Refine runs on the GPU (`gclimb.zig`, `climb.wgsl`): every step scores its candidates and the current pose, keeps the best that beats the current score (`climb_select`) and computes the gradient there, all on the device in f32. Eight iterations go into one submission as gated dispatches (`Gpu.beginGate`): a small kernel zeroes their workgroup counts once the climb's done flag is set, so a converged climb costs nothing more. The host reads the state once per batch for the trail, the pose and Stop.
   - Acceptance is relative: a score must beat the best by 1e-7 of it (`pair.beats`), about what the f32 moment sums resolve.
   - No dispatch exceeds 65535 workgroups per dimension.
@@ -115,9 +116,10 @@ Changes to the registration should keep these passing. Report accuracy against g
    - tests the wheels on Linux, Windows and macOS (on the M1, on its GPU, in headless Chrome, and by running the tutorials);
    - publishes to PyPI by trusted publishing;
    - attaches the wheels, the site and the executed tutorials (each `.ipynb`, plus a zip with their HTML) to a GitHub Release;
-   - deploys the site to GitHub Pages: the app at <https://zacharyvarley.github.io/zcmir/>, the tutorials under `tutorials/`.
+   - deploys the site to GitHub Pages: the app at <https://zacharyvarley.github.io/zcmir/>, the tutorials under `tutorials/`, and `zcmir/pipelines.json`, the pipelines the M1's browser test compiled (`test_web.mjs --save-pipelines`). A first visit starts compiling them as the page loads.
 
    Run by hand (Actions → release → Run workflow), it only builds and tests.
 3. **One-time setup.**
    - On PyPI, add a trusted publisher for this repository: workflow `release.yml`, environment `pypi`.
    - In the repository settings, create the environment `pypi`, and under Pages set the source to **GitHub Actions**.
+   - Under Environments → `github-pages` → Deployment branches and tags, add a tag rule `v*` (Pages allows only the default branch at first).
