@@ -1,0 +1,204 @@
+{
+ "presets": [
+  {
+   "id": "in718-65",
+   "group": "IN718 \u00b7 EBSD vs BSE (NIST AM Bench)",
+   "name": "section 65",
+   "moving": "in718-65/moving.png",
+   "fixed": "in718-65/fixed.png",
+   "source": "nist-ambench",
+   "model": "homography"
+  },
+  {
+   "id": "in718-85",
+   "group": "IN718 \u00b7 EBSD vs BSE (NIST AM Bench)",
+   "name": "section 85",
+   "moving": "in718-85/moving.png",
+   "fixed": "in718-85/fixed.png",
+   "source": "nist-ambench",
+   "model": "homography"
+  },
+  {
+   "id": "landsat-a",
+   "group": "Landsat 8 \u00b7 flood vs dry season",
+   "name": "Pra River A (rot +0\u00b0, \u00d71.00)",
+   "moving": "landsat-a/moving.jpg",
+   "fixed": "landsat-a/fixed.jpg",
+   "source": "nasa-landsat",
+   "model": "homography",
+   "truth": [
+    [
+     1.0,
+     0.0,
+     80.0
+    ],
+    [
+     0.0,
+     1.0,
+     15.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "landsat-b",
+   "group": "Landsat 8 \u00b7 flood vs dry season",
+   "name": "Pra River B (rot -30\u00b0, \u00d71.20)",
+   "moving": "landsat-b/moving.jpg",
+   "fixed": "landsat-b/fixed.jpg",
+   "source": "nasa-landsat",
+   "model": "homography",
+   "truth": [
+    [
+     1.0392304845413265,
+     0.5999999999999999,
+     -169.30415091384202
+    ],
+    [
+     -0.5999999999999999,
+     1.0392304845413265,
+     217.2958490861579
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "landsat-c",
+   "group": "Landsat 8 \u00b7 flood vs dry season",
+   "name": "Pra River C (rot +75\u00b0, \u00d70.85)",
+   "moving": "landsat-c/moving.jpg",
+   "fixed": "landsat-c/fixed.jpg",
+   "source": "nasa-landsat",
+   "model": "homography",
+   "truth": [
+    [
+     0.21999618833714263,
+     -0.8210369523457081,
+     504.09193430440257
+    ],
+    [
+     0.8210369523457081,
+     0.21999618833714263,
+     63.49020403846043
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "mida-aerial-zh1501",
+   "group": "Aerial \u00b7 NIR vs RGB (Zurich)",
+   "name": "patch zh15",
+   "moving": "mida-aerial-zh1501/moving.png",
+   "fixed": "mida-aerial-zh1501/fixed.png",
+   "source": "mida",
+   "model": "homography",
+   "truth": [
+    [
+     0.965700868163457,
+     0.25965714553792885,
+     -60.54423274688592
+    ],
+    [
+     -0.25965714553796715,
+     0.9657008681635513,
+     26.39956212908113
+    ],
+    [
+     -1.2378643253595276e-14,
+     1.2378643253595276e-14,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "mida-aerial-zh902",
+   "group": "Aerial \u00b7 NIR vs RGB (Zurich)",
+   "name": "patch zh9",
+   "moving": "mida-aerial-zh902/moving.png",
+   "fixed": "mida-aerial-zh902/fixed.png",
+   "source": "mida",
+   "model": "homography",
+   "truth": [
+    [
+     0.9554263137672482,
+     -0.295229671545718,
+     80.20273251014324
+    ],
+    [
+     0.2952296715456803,
+     0.9554263137673329,
+     -56.887472930337644
+    ],
+    [
+     -1.023604251979804e-15,
+     1.4501060236380554e-15,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "mida-hist-1b",
+   "group": "Histology \u00b7 SHG vs bright field",
+   "name": "core 1B-A1",
+   "moving": "mida-hist-1b/moving.jpg",
+   "fixed": "mida-hist-1b/fixed.jpg",
+   "source": "mida",
+   "model": "homography",
+   "truth": [
+    [
+     0.9484317934475133,
+     -0.31698128206780707,
+     191.54877661556785
+    ],
+    [
+     0.31698128206854587,
+     0.9484317934481586,
+     -22.699388707082484
+    ],
+    [
+     5.6467580645310275e-14,
+     -5.93955292713634e-14,
+     1.0
+    ]
+   ]
+  },
+  {
+   "id": "mida-cyto-du145",
+   "group": "Cells \u00b7 fluorescence vs phase (hard)",
+   "name": "DU145",
+   "moving": "mida-cyto-du145/moving.png",
+   "fixed": "mida-cyto-du145/fixed.png",
+   "source": "mida",
+   "model": "homography",
+   "truth": [
+    [
+     0.9651020166932194,
+     0.26187420142994305,
+     -15.588212987749092
+    ],
+    [
+     -0.2618742014298542,
+     0.9651020166932551,
+     13.244072610994587
+    ],
+    [
+     -5.697658204041491e-16,
+     6.409865479546677e-16,
+     1.0
+    ]
+   ]
+  }
+ ]
+}

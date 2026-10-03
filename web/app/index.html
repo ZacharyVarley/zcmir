@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zcmir · multimodal registration</title>
+  <link rel="stylesheet" href="./css/app.css">
+  <link rel="modulepreload" href="./zcmir/zcmir.js">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-play" viewBox="0 0 12 12"><path d="M3 1.8v8.4c0 .4.4.6.7.4l6.6-4.2c.3-.2.3-.6 0-.8L3.7 1.4c-.3-.2-.7 0-.7.4z" fill="currentColor"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 12 12"><path d="M4 2.5 7.5 6 4 9.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="12.5" cy="8" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="i-open" viewBox="0 0 16 16"><path d="M2.5 5.5V12a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V6.5a1 1 0 0 0-1-1H8L6.5 3.5h-3a1 1 0 0 0-1 1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 12 12"><path d="M2.5 6.3 5 8.7l4.5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-logo" viewBox="0 0 20 20"><rect x="2.5" y="2.5" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="7.5" y="7.5" width="10" height="10" rx="1.5" fill="currentColor" fill-opacity=".28" stroke="currentColor" stroke-width="1.5" transform="rotate(8 12.5 12.5)"/></symbol>
+  </svg>
+
+  <div class="app" id="app" data-dock="kp" data-group="homography" data-ffd="off" data-images="0" data-mode="pair" data-thumbs="on">
+
+    <div class="stagewrap">
+      <main class="work">
+        <button type="button" class="rail-revive" id="btn-rail-show">inspector</button>
+        <section class="stage-view" id="view-main">
+          <div class="side" id="side">
+            <div class="side-tabs" id="dock-bar" role="tablist" aria-label="side views">
+              <button type="button" class="dock-tab" data-dock="kp" aria-pressed="true" title="Moving and fixed images with keypoints and matches (1)">Keypoints</button>
+              <button type="button" class="dock-tab" data-dock="map" aria-pressed="false" title="Shift and rotation × scale maps around the current pose (2)">Maps</button>
+              <button type="button" class="dock-tab" data-dock="score" aria-pressed="false" title="Score history and the recorded poses (3)">Score</button>
+              <button type="button" class="dock-tab stack-only" data-dock="stack" aria-pressed="false" title="Every slice of the stack: score, change from the previous slice, and how it was registered (5)">Slices</button>
+              <button type="button" class="dock-tab" data-dock="pop" aria-pressed="false" title="The last brute-force run: its landscape and candidate poses (4)">Brute force</button>
+            </div>
+            <div class="dock" id="dock">
+              <div class="dock-pane" id="dock-kp">
+                <div class="pane-bar tools" id="kp-tools">
+                  <label class="inline" title="Which keypoints to draw">show
+                    <select id="kp-show">
+                      <option value="inliers" selected>inliers</option>
+                      <option value="matched">matched</option>
+                      <option value="all">all</option>
+                    </select>
+                  </label>
+                  <label class="check tight"><input type="checkbox" id="kp-dots" checked> circles</label>
+                  <label class="check tight" title="Draw every correspondence. Off draws only the match you click."><input type="checkbox" id="kp-lines"> lines</label>
+                  <select id="kp-line-color" title="Correspondence color. Strength uses the descriptor inner product; outliers stay red.">
+                    <option value="class" selected>by class</option>
+                    <option value="score">by strength</option>
+                  </select>
+                  <label class="inline range" id="kp-max-lbl" title="Draw at most this many (a random subsample, so correspondences stay readable).">max
+                    <input type="range" id="kp-max" min="50" max="2500" step="50" value="1000">
+                    <b id="kp-max-val">1000</b>
+                  </label>
+                </div>
+                <div class="pair" id="pair">
+                  <section class="pane source drop" id="pane-left" data-side="left">
+                    <div class="pane-bar">
+                      <span class="ttl">moving</span>
+                      <span class="meta" id="meta-left">drop an image</span>
+                    </div>
+                    <div class="pane-body"><canvas id="cv-left"></canvas></div>
+                  </section>
+                  <div class="split h" id="split-pair" role="separator" aria-orientation="horizontal" aria-label="Resize moving and fixed"></div>
+                  <section class="pane source drop" id="pane-right" data-side="right">
+                    <div class="pane-bar">
+                      <span class="ttl">fixed</span>
+                      <span class="meta" id="meta-right">drop an image</span>
+                    </div>
+                    <div class="pane-body"><canvas id="cv-right"></canvas></div>
+                  </section>
+                  <canvas id="cv-matches"></canvas>
+                  <div class="kp-patch" id="kp-patch" hidden>
+                    <div class="kp-patch-row">
+                      <div class="kp-patch-col" id="patch-col-l">
+                        <canvas id="cv-patch-l" width="96" height="96"></canvas>
+                        <span class="sub" id="patch-sub-l"></span>
+                      </div>
+                      <div class="kp-patch-col" id="patch-col-r" hidden>
+                        <canvas id="cv-patch-r" width="96" height="96"></canvas>
+                        <span class="sub" id="patch-sub-r"></span>
+                      </div>
+                    </div>
+                    <span class="meta" id="patch-meta"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="dock-pane" id="dock-map" hidden>
+                <div class="map-stack duo" id="map-stack">
+                  <div class="pane-bar tools map-tools" id="map-tools">
+                    <div class="tools-row">
+                    <label class="inline" title="Map resolution. auto: the canvas on a power-of-two coarser grid with a 128–512 FFT per side (the score's peak is a few percent of the image wide; the climb refines within a cell). A number: the FFT length cap; a canvas wider than half of it is resampled onto a coarser grid.">resolution
+                      <select id="map-res">
+                        <option value="0" selected>auto</option>
+                        <option value="1024">1024</option>
+                        <option value="512">512</option>
+                        <option value="256">256</option>
+                      </select>
+                    </label>
+                    <label class="inline" title="Colormap">
+                      <select id="theme" title="Colormap" aria-label="colormap">
+                        <option value="4" selected>gray</option>
+                        <option value="0">ice</option>
+                        <option value="1">viridis</option>
+                        <option value="2">magma</option>
+                        <option value="3">turbo</option>
+                        <option value="5">twilight</option>
+                      </select>
+                    </label>
+                    </div>
+                    <div class="tools-row">
+                    <label class="check tight" id="map-cal-lab" title="Exact whitening only. Score each shift (and each rotation × scale of the roto-scale map) by the finite-sample significance of its canonical correlations (Pillai F, Wilson–Hilferty z) with n_eff = overlap / feature correlation area, instead of n·Σρ² with an 8% overlap floor. Small overlaps then need proportionally stronger dependence to win."><input type="checkbox" id="map-cal" checked> calibrated</label>
+                    <label class="check tight" title="Log-stretch the colormap over the positive score range so a sharp peak uses the full scale."><input type="checkbox" id="map-log"> log</label>
+                    <label class="check tight" title="Show the colormap scale beside the shift map."><input type="checkbox" id="map-cbar"> scale</label>
+                    <label class="check tight" title="Recompute both maps while dragging overlay corners or the roto-scale center, before the pointer is released."><input type="checkbox" id="map-live"> live</label>
+                    </div>
+                  </div>
+                  <section class="pane" id="pane-map">
+                    <div class="pane-bar">
+                      <span class="ttl" title="Score at every translation of the moving image about the current pose.">shift</span>
+                      <span class="meta" id="map-meta"></span>
+                      <span class="hint-i" tabindex="0" title="Click a map: preview that pose on the overlay (snaps to the local peak; Shift-click: the exact cell). Double-click or Enter: apply. Right-click or Esc: cancel. Wheel: zoom. Drag: pan. fit: the whole map.">?</span>
+                      <button class="ghost tight" id="map-fit" type="button" title="Fit the whole map (resets zoom and pan)">fit</button>
+                    </div>
+                    <div class="pane-body map-body no-cbar" id="map-body">
+                      <div class="map-plot">
+                        <canvas id="cv-map"></canvas>
+                      </div>
+                      <canvas id="cv-cbar" width="14" height="256" hidden></canvas>
+                    </div>
+                  </section>
+                  <section class="pane" id="pane-rs">
+                    <div class="pane-bar">
+                      <span class="ttl" title="Score at every rotation and scale of the moving image about the roto-scale center (the cyan marker on the overlay; drag it to move), from a log-polar resampling.">rotation × scale</span>
+                      <span class="meta" id="rs-meta"></span>
+                      <button class="ghost tight" id="rs-fit" type="button" title="Fit the whole map (resets zoom and pan)">fit</button>
+                    </div>
+                    <div class="pane-body map-body no-cbar">
+                      <div class="map-plot">
+                        <canvas id="cv-rs"></canvas>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+              <div class="dock-pane" id="dock-score" hidden>
+                <div class="flexpane" id="pane-flex">
+                  <div class="pane-bar">
+                    <span class="ttl" title="Score versus step, one axis. Symmetric score adds the inverse SMI. A climb point is added only when it beats the best so far.">score history</span>
+                    <span class="meta" id="flex-meta">click a sample to restore that pose</span>
+                    <button class="ghost tight" id="btn-flex-reset" type="button" title="Fit the full score history (also double-click the plot)">fit</button>
+                  </div>
+                  <canvas id="cv-flex"></canvas>
+                </div>
+                <div class="side-list" id="trail-box">
+                  <div class="pane-bar">
+                    <span class="ttl" title="Every pose recorded by Match, Pose, the map hops and Search, newest first. Click a row to restore that pose (Ctrl+Z undoes).">poses</span>
+                    <span class="meta" id="trail-count"></span>
+                  </div>
+                  <ol class="rows" id="trail-list"></ol>
+                </div>
+              </div>
+              <div class="dock-pane" id="dock-stack" hidden>
+                <div class="side-list" id="slice-box">
+                  <div class="pane-bar">
+                    <span class="ttl" title="Click a row to open that slice pair">slices</span>
+                    <span class="meta" id="slice-meta"></span>
+                  </div>
+                  <ol class="rows slices" id="slice-list"></ol>
+                </div>
+              </div>
+              <div class="dock-pane" id="dock-pop" hidden>
+                <section class="pane" id="pane-tile-dest" hidden>
+                  <div class="pane-bar">
+                    <span class="ttl">dest tiles</span>
+                    <span class="meta" id="tile-dest-meta">8×8</span>
+                  </div>
+                  <div class="pane-body"><canvas id="cv-tile-dest"></canvas></div>
+                </section>
+                <section class="pane" id="pane-tile-src" hidden>
+                  <div class="pane-bar">
+                    <span class="ttl">src tiles</span>
+                    <span class="meta" id="tile-src-meta">exchange view</span>
+                  </div>
+                  <div class="pane-body"><canvas id="cv-tile-src"></canvas></div>
+                </section>
+                <section class="pane" id="pane-swarm">
+                  <div class="pane-bar">
+                    <span class="ttl" title="Sweep: the best score of each rotation × scale cell (white rings: peaks, orange: finalists, gold: result). Cloud: every member's score at each step.">landscape</span>
+                    <span class="meta" id="swarm-meta">run Search (H)</span>
+                  </div>
+                  <div class="pane-body"><canvas id="cv-swarm"></canvas></div>
+                </section>
+                <div class="side-list" id="cand-box">
+                  <div class="pane-bar">
+                    <span class="ttl" title="The finalists of the last sweep after their full climb, best first. Click one to try its pose on the overlay (Ctrl+Z undoes); the best is applied automatically when it beats the current pose.">candidates</span>
+                    <span class="meta" id="cand-meta"></span>
+                  </div>
+                  <ol class="rows" id="cand-list"></ol>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="split v" id="split-align" role="separator" aria-orientation="vertical" aria-label="Resize the side views and the overlay" title="Drag to resize · double-click: automatic width"></div>
+          <div class="slot" id="slot-reg">
+            <section class="pane drop" id="pane-reg">
+              <div class="pane-bar tools">
+                <span class="ttl">overlay</span>
+                <select id="reg-mode" title="How the two images are shown together">
+                  <option value="soft" selected>soft fade</option>
+                  <option value="flicker">flicker</option>
+                  <option value="blend">blend</option>
+                  <option value="checker">checkerboard</option>
+                  <option value="warp">moving only (warped)</option>
+                  <option value="fixed">fixed only</option>
+                </select>
+                <span class="head-ctrls">
+                  <input type="number" id="flick-ms" value="2000" min="40" max="8000" step="20" title="Soft fade and flicker period (ms)">
+                  <span class="unit" id="flick-unit">ms</span>
+                  <input type="number" id="chk-px" value="16" min="2" max="256" step="1" title="Checker tile size (px)" hidden>
+                  <span class="unit" id="chk-unit" hidden>px</span>
+                </span>
+                <span class="grow"></span>
+                <label class="toggle" title="When on, drag / wheel / keys edit the pose (? lists the keys). When off, they zoom and pan the overlay."><input type="checkbox" id="tweak"><span>edit pose</span></label>
+                <button class="ghost" id="btn-swap" type="button" title="Swap moving and fixed. The homography inverts, and a B-spline follows as its adjoint.">swap</button>
+                <details class="more view-menu">
+                  <summary title="Overlay view options">view</summary>
+                  <div class="more-pop form">
+                    <label class="check" id="zoom-ov-lab" title="Fit the overlay to the overlap region."><input type="checkbox" id="zoom-ov"> zoom to the overlap</label>
+                    <label class="check" title="Show the inverse warp in this pane: the fixed image warped onto the moving image."><input type="checkbox" id="inverse"> inverse warp</label>
+                    <div class="menu-row">
+                      <button class="ghost" id="btn-h-toggle" type="button" aria-pressed="false" title="Show the 3×3 homography on the overlay">show H</button>
+                      <label class="check tight" title="8 decimal places on the homography"><input type="checkbox" id="h-digits" checked> 8 decimals</label>
+                    </div>
+                    <div class="spline-only menu-group">
+                      <span class="menu-cap">B-spline</span>
+                      <label title="How the B-spline is drawn on the overlay. Deformed grid: a regular grid pushed through the actual displacement field (exaggerated so the largest displacement spans a quarter cell; the legend gives the true size). Area change also fills each cell by det J: blue compresses, red expands, magenta folds. Control points: the draggable coefficient handles only, with hollow circles at the rest lattice.">draw
+                        <select id="ffd-view">
+                          <option value="grid" selected>deformed grid</option>
+                          <option value="jac">grid + area change</option>
+                          <option value="lattice">control points</option>
+                        </select>
+                      </label>
+                      <label title="Last update: change of the displacement field from the previous coefficients (the last climb step or handle drag), true direction, own exaggeration. Gradient: log-scaled ascent direction at the control points.">arrows
+                        <select id="ffd-arrows">
+                          <option value="update" selected>last update</option>
+                          <option value="grad">gradient</option>
+                          <option value="none">none</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </details>
+              </div>
+              <div class="pane-body">
+                <canvas id="cv-reg" tabindex="0"></canvas>
+                <div id="handle-tip" class="handle-tip" hidden></div>
+                <pre class="hpanel" id="Htxt" hidden></pre>
+                <div class="welcome" id="empty-state">
+                  <svg class="welcome-logo"><use href="#i-logo"/></svg>
+                  <h1>Register two images</h1>
+                  <p>Drop a <b>moving</b> and a <b>fixed</b> image here: two files at once, moving first. Any modalities, any formats the browser reads.</p>
+                  <div class="welcome-actions">
+                    <button type="button" id="btn-empty-left"><svg><use href="#i-open"/></svg>open moving</button>
+                    <button type="button" id="btn-empty-right"><svg><use href="#i-open"/></svg>open fixed</button>
+                  </div>
+                  <p class="fine">Everything runs on your GPU in this browser tab; the images never leave this computer.</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+        <div class="stack-bar stack-only" id="stack-bar">
+          <div class="stack-nav">
+            <button type="button" class="icon" id="btn-slice-prev" title="Previous slice (← or PageUp)"><svg style="transform:rotate(180deg)"><use href="#i-chev"/></svg></button>
+            <button type="button" class="icon play" id="btn-slice-play" title="Play through the stack (Space)"><svg class="i-play"><use href="#i-play"/></svg><svg class="i-pause" viewBox="0 0 12 12"><rect x="2.5" y="2" width="2.6" height="8" rx=".6" fill="currentColor"/><rect x="6.9" y="2" width="2.6" height="8" rx=".6" fill="currentColor"/></svg></button>
+            <button type="button" class="icon" id="btn-slice-next" title="Next slice (→ or PageDown)"><svg><use href="#i-chev"/></svg></button>
+            <div class="stack-where"><b id="slice-pos">—</b><span id="slice-names"></span></div>
+          </div>
+          <div class="stack-track" id="stack-track" title="">
+            <canvas id="cv-stack"></canvas>
+            <input type="range" id="slice-slider" min="1" max="1" step="1" value="1" aria-label="slice">
+          </div>
+          <div class="stack-side">
+            <div class="seg mini" id="stack-view-seg">
+              <label title="The two images of the slice, as the overlay mode shows them"><input type="radio" name="stack-view" value="overlay" checked><span>Overlay</span></label>
+              <label title="Only the moving image, warped into the fixed frame: sweep through the registered moving stack"><input type="radio" name="stack-view" value="moving"><span>Moving</span></label>
+              <label title="Only the fixed image, in the same frame: flick between Moving and Fixed to compare (M / F)"><input type="radio" name="stack-view" value="fixed"><span>Fixed</span></label>
+            </div>
+            <label class="check tight" title="Thumbnails of the moving slices above the score bars"><input type="checkbox" id="stack-thumbs" checked> thumbnails</label>
+            <label class="inline" title="Playback speed">speed
+              <select id="slice-fps">
+                <option value="2">2 / s</option>
+                <option value="5" selected>5 / s</option>
+                <option value="10">10 / s</option>
+                <option value="20">20 / s</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </main>
+
+      <div class="split v" id="split-rail" role="separator" aria-orientation="vertical" aria-label="Resize inspector"></div>
+      <aside class="rail" id="rail">
+        <header class="rail-top">
+          <span class="brand"><svg class="logo"><use href="#i-logo"/></svg><span class="name">zcmir</span></span>
+          <span class="grow"></span>
+          <select id="preset" title="Load an example pair (sources and licenses: presets/ATTRIBUTION.md)"><option value="">Examples…</option></select>
+          <button type="button" class="ghost" id="btn-undo" title="Undo the last pose change (Ctrl+Z)">undo</button>
+          <details class="more">
+            <summary title="More" aria-label="More"><svg><use href="#i-dots"/></svg></summary>
+            <div class="more-pop">
+              <button type="button" id="btn-export-warp" title="Download an Insight .tfm plus an NRRD displacement field.">Export warp…</button>
+              <button type="button" id="btn-log" aria-pressed="false" title="Toggle log (L)">Show log</button>
+              <button type="button" id="btn-keys" title="Keyboard and mouse (?)">Keys and mouse</button>
+              <button type="button" id="btn-rail" aria-pressed="false" title="Hide the inspector">Hide inspector</button>
+            </div>
+          </details>
+        </header>
+
+        <div class="mode-row">
+          <div class="seg" id="mode-seg">
+            <label title="Register one moving image to one fixed image"><input type="radio" name="mode" value="pair" checked><span>Pair</span></label>
+            <label title="Register a moving stack to a fixed stack slice by slice (serial sections, time series)"><input type="radio" name="mode" value="stack"><span>Stack</span></label>
+          </div>
+        </div>
+
+        <section class="files stack-only">
+          <div class="file">
+            <span class="role">moving</span>
+            <span class="fname" id="stack-name-left">no stack</span>
+            <button type="button" class="icon" id="btn-stack-left" title="Open the moving stack: several images, ordered by file name"><svg><use href="#i-open"/></svg></button>
+          </div>
+          <div class="file">
+            <span class="role">fixed</span>
+            <span class="fname" id="stack-name-right">no stack</span>
+            <button type="button" class="icon" id="btn-stack-right" title="Open the fixed stack: several images, ordered by file name"><svg><use href="#i-open"/></svg></button>
+          </div>
+        </section>
+
+        <section class="files pair-only">
+          <div class="file" id="file-row-left">
+            <span class="role">moving</span>
+            <span class="fname" id="fname-left">—</span>
+            <button type="button" class="icon" id="btn-open-left" title="Open the moving image (or drop it on the moving pane)"><svg><use href="#i-open"/></svg></button>
+          </div>
+          <div class="file" id="file-row-right">
+            <span class="role">fixed</span>
+            <span class="fname" id="fname-right">—</span>
+            <button type="button" class="icon" id="btn-open-right" title="Open the fixed image (or drop it on the fixed pane)"><svg><use href="#i-open"/></svg></button>
+          </div>
+        </section>
+
+        <section class="model">
+          <div class="seg" id="group-seg">
+            <label title="Affine · rotation, translation, scale, and shear (6 DOF)"><input type="radio" name="group" value="affine"><span>Affine</span></label>
+            <label title="Homography · projective 3×3 (8 DOF)"><input type="radio" name="group" value="homography" checked><span>Homography</span></label>
+          </div>
+          <div class="spline-row">
+            <label class="toggle" title="Add a cubic B-spline free-form deformation on top of the affine or homography. Auto then climbs the global model first and the spline with it last."><input type="checkbox" id="ffd"><span>+ B-spline</span></label>
+            <label class="spline-grid" title="Control points along each side of the lattice. More points follow finer local distortion but need more overlap to stay well posed.">lattice <input type="number" id="ffd-g" value="4" min="2" max="16" step="1"></label>
+          </div>
+        </section>
+
+        <div class="run">
+          <button class="primary stack-only" id="btn-stack-run" type="button" title="Register every slice pair in order, with the options of the Stack card"><b>Register stack</b><span id="stack-plan">keypoints, then carry</span></button>
+          <button class="primary pair-only" id="btn-auto" type="button" title="Detect, match, and climb the pose; with + B-spline, then climb the spline together with the pose. Does not search."><b>Auto</b><span id="auto-plan">detect → match → refine</span></button>
+          <button class="stop" id="btn-stop" type="button" disabled hidden title="Stop the running step (Esc)"><svg><use href="#i-stop"/></svg><span>Stop</span><span class="busy-msg" id="busy-msg"></span></button>
+        </div>
+
+        <div class="steps" id="steps">
+
+          <section class="card stack-only" data-card="stack">
+            <div class="card-head">
+              <button type="button" class="card-toggle" aria-expanded="false">
+                <span class="badge dot"></span>
+                <span class="name">Stack</span>
+                <span class="sum" id="sum-stack"></span>
+                <span class="res" id="res-stack"></span>
+                <svg class="chev"><use href="#i-chev"/></svg>
+              </button>
+            </div>
+            <div class="card-body" hidden>
+              <h3 class="cap">Start each slice from</h3>
+              <div class="seg" id="stack-init-seg">
+                <label title="The previous slice's transform, then refine; fall back to keypoints when the score drops"><input type="radio" name="stack-init" value="carry" checked><span>Previous slice</span></label>
+                <label title="Detect and match keypoints on every slice pair"><input type="radio" name="stack-init" value="keypoints"><span>Keypoints</span></label>
+              </div>
+              <h3 class="cap">Re-detect a slice when</h3>
+              <div class="fields">
+                <div><label title="Fresh keypoints for a slice whose refined score falls more than this far below the previous slice's. The better of the two poses is kept.">its score drops by <span class="u">%</span></label><input type="number" id="stack-drop" value="15" min="0" max="100" step="1"></div>
+                <div><label title="Fresh keypoints for a slice whose moving-image corners land this far from the previous slice's (fixed pixels). Empty: automatic, 4× the stack's median (at least 2 px). The same threshold flags slices that are off the trend of their neighbours.">its pose jumps by <span class="u">px</span></label><input type="number" id="stack-jump" value="" placeholder="auto" min="0" max="10000" step="0.5"></div>
+              </div>
+              <label class="check" title="After the forward pass, refine each slice again from the next slice's pose (last to first) and keep whichever scores higher. Fixes a first slice whose keypoint pose was slightly off; costs one more refine per slice."><input type="checkbox" id="stack-polish"> polish backward <span class="note">each slice again from the next one's pose</span></label>
+              <p class="hint">The first slice always starts from keypoints. Each slice is refined with the model above (and the B-spline when it is on); the Detect, Match and Refine settings apply to every slice.</p>
+              <h3 class="cap">This slice</h3>
+              <div class="btns">
+                <button id="btn-slice-kp" type="button" title="Register the current slice pair again from keypoints">redo from keypoints</button>
+                <button id="btn-slice-carry" type="button" title="Register the current slice pair again from the previous slice's transform">redo from previous</button>
+              </div>
+              <h3 class="cap">Stack</h3>
+              <div class="btns">
+                <button id="btn-stack-from" type="button" title="Register from the current slice to the end, keeping the slices before it">register from here</button>
+                <button id="btn-stack-flagged" type="button" title="Register every flagged slice again from keypoints (flagged: off the trend of its neighbours, see the Slices tab)">redo flagged</button>
+              </div>
+              <h3 class="cap">Export</h3>
+              <div class="fields">
+                <div>
+                  <label title="TIFF: one multi-page file per stack (Fiji / ImageJ open it as a stack). PNG: one file per slice.">format</label>
+                  <select id="stack-format">
+                    <option value="tif" selected>TIFF stack</option>
+                    <option value="png">PNG per slice</option>
+                  </select>
+                </div>
+                <div class="end"><label class="check" title="Also the fixed stack, in the same format, so the two line up pixel for pixel"><input type="checkbox" id="stack-with-fixed" checked> with fixed</label></div>
+              </div>
+              <div class="btns">
+                <button id="btn-stack-warped" type="button" title="Every registered slice's original moving image resampled into its fixed frame (the engine's displacement field: the affine / homography and the B-spline), in a ZIP with the transforms">export registered stack</button>
+                <button id="btn-stack-export" type="button" title="Download every slice's transform (JSON: 3×3 moving → fixed, 1-based pixel centres)">transforms only</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="card" data-card="pre">
+            <div class="card-head">
+              <button type="button" class="card-toggle" aria-expanded="false">
+                <span class="badge dot"></span>
+                <span class="name">Preprocess</span>
+                <span class="sum" id="sum-pre"></span>
+                <svg class="chev"><use href="#i-chev"/></svg>
+              </button>
+            </div>
+            <div class="card-body" hidden>
+              <label class="check" title="Contrast-limited adaptive histogram equalization on both images before detect, match, and the overlay."><input type="checkbox" id="clahe" checked> CLAHE <span class="note">local contrast equalization</span></label>
+              <label class="check" title="Difference of Gaussians. Subtracts a wide blur from a narrow one, then stretches the result back to the full range."><input type="checkbox" id="band"> band pass <span class="note">difference of Gaussians</span></label>
+              <div class="fields indent">
+                <div><label title="Width, in pixels, of the blur that is kept. 1 is a single Gaussian pass.">fine <span class="u">px</span></label><input type="number" id="bp-fine" value="1" min="0.5" max="4" step="0.5" disabled></div>
+                <div><label title="Width, in pixels, of the blur that is subtracted. Larger removes slow shading.">coarse <span class="u">px</span></label><input type="number" id="bp-coarse" value="6" min="2" max="8" step="1" disabled></div>
+              </div>
+              <label class="check" title="Flip light and dark after the other filters. Useful when one modality is contrast-inverted."><input type="checkbox" id="invert"> invert <span class="note">one modality is contrast-inverted</span></label>
+              <p class="hint">Applied to both images before detection, scoring and the overlay.</p>
+            </div>
+          </section>
+
+          <section class="card" data-card="det" data-step="detect">
+            <div class="card-head">
+              <button type="button" class="card-toggle" aria-expanded="false">
+                <span class="badge"><i>1</i><svg><use href="#i-check"/></svg></span>
+                <span class="name">Detect</span>
+                <span class="sum" id="sum-det"></span>
+                <span class="res" id="sum-kps" title="Keypoints: moving / fixed"></span>
+                <svg class="chev"><use href="#i-chev"/></svg>
+              </button>
+              <button class="go" id="btn-run" type="button" title="Detect keypoints on both images (D)"><svg><use href="#i-play"/></svg></button>
+            </div>
+            <div class="card-body" hidden>
+              <div class="seg" id="detector-seg">
+                <label title="Phase-congruency corners, Log-Gabor ring descriptor, POS guided re-matching (Hou, Liu &amp; Zhang 2024)"><input type="radio" name="detector" value="pos" checked><span>POS-GIFT</span></label>
+                <label title="Steerable-filter FAST corners on a scale pyramid (Fan et al. 2024)"><input type="radio" name="detector" value="gls"><span>GLS-MIFT</span></label>
+              </div>
+              <div id="pg-opts">
+                <p class="hint">Phase-congruency corners, a Log-Gabor ring descriptor, and POS guided re-matching (Hou, Liu &amp; Zhang 2024).</p>
+                <label class="check" title="On: finds any rotation between the images (one global rotation, tested every 15°); about 3× slower. Off: assumes the images are within about 7° of each other."><input type="checkbox" id="pg-search" checked> rotation search <span class="note">any angle; off: within ~7°</span></label>
+                <div class="detect" id="pg-detect"></div>
+                <details class="fold" id="pg-adv-fold">
+                  <summary title="Descriptor structure, phase congruency and POS re-matching. Structure changes recompile the shaders (a few seconds on the next Detect).">Advanced</summary>
+                  <div class="detect" id="pg-adv"></div>
+                  <label class="check" title="Keypoints on the minimum moment of phase congruency (corners). Off: on the phase-congruency sum (edges), as the released code."><input type="checkbox" id="pg-corners" checked> corner keypoints</label>
+                </details>
+              </div>
+              <div id="gls-opts" hidden>
+                <p class="hint">Steerable-filter FAST corners on a scale pyramid (Fan et al. 2024).</p>
+                <div class="detect" id="detect"></div>
+                <div class="detect" id="describe"></div>
+                <label class="check" title="The threshold becomes the median absolute steered response of the first scale. The number is used only when this is off."><input type="checkbox" id="opt-nt" checked> automatic feature-map threshold</label>
+                <label class="check" title="Also describe the point at its second orientation when that peak is at least 0.8× the first."><input type="checkbox" id="opt-second" checked> second orientation</label>
+                <details class="fold" id="gls-adv-fold">
+                  <summary title="Descriptor structure. Changing it recompiles the shaders (a few seconds on the next Detect).">Advanced</summary>
+                  <div class="detect" id="gls-adv"></div>
+                </details>
+              </div>
+              <label class="check" id="half-lab" title="fp16 for CLAHE, detection, descriptors, and matching. The pose climb and the searches stay fp32."><input type="checkbox" id="half" checked> half precision <span class="note">fp16 features, faster</span></label>
+            </div>
+          </section>
+
+          <section class="card" data-card="match" data-step="match">
+            <div class="card-head">
+              <button type="button" class="card-toggle" aria-expanded="false">
+                <span class="badge"><i>2</i><svg><use href="#i-check"/></svg></span>
+                <span class="name">Match</span>
+                <span class="sum" id="sum-mat"></span>
+                <span class="res" title="Inliers / matches"><b id="sum-inl"></b><span id="sum-match" hidden></span></span>
+                <svg class="chev"><use href="#i-chev"/></svg>
+              </button>
+              <button class="go" id="btn-rematch" type="button" data-step-btn="match" disabled title="Match the descriptors and fit the model. Needs Detect first. Resets the spline."><svg><use href="#i-play"/></svg></button>
+            </div>
+            <div class="card-body" hidden>
+              <div id="gls-match-opts">
+                <label class="stacked" title="Robust model fit after nearest-neighbour matching. Lo-FSC is the original GPU 3-point affine. PROSAC + predicates and MAGSAC++ are 4-point homography alternatives.">robust fit
+                  <select id="match-method">
+                    <option value="lofsc" selected>Lo-FSC (3-point affine)</option>
+                    <option value="prosac">PROSAC + predicates</option>
+                    <option value="magsac">MAGSAC++</option>
+                  </select>
+                </label>
+              </div>
+              <div class="detect" id="match"></div>
+              <div id="gls-match-opts2">
+                <label class="check" title="Match every scale with every scale. Keep a level pair only when its own affine agrees, then fit one model."><input type="checkbox" id="opt-octave" checked> per octave</label>
+                <label class="check" title="Drop a match unless it is also the nearest neighbor in the other direction."><input type="checkbox" id="mutual"> mutual nearest neighbor</label>
+              </div>
+              <div class="btns">
+                <button id="btn-refit" type="button" title="Least-squares model from the current inliers">refit from inliers</button>
+              </div>
+              <p class="hint" id="match-hint">Lo-FSC fits a 3-point affine. The inlier radius selects that model and recolors the overlay.</p>
+            </div>
+          </section>
+
+          <section class="card" data-card="pose" data-step="climb">
+            <div class="card-head">
+              <button type="button" class="card-toggle" aria-expanded="false">
+                <span class="badge"><i>3</i><svg><use href="#i-check"/></svg></span>
+                <span class="name">Refine</span>
+                <span class="sum" id="sum-pose"></span>
+                <span class="res" id="res-pose" title="Score at the current pose (× the identity's)"></span>
+                <svg class="chev"><use href="#i-chev"/></svg>
+              </button>
+              <button class="go" id="btn-grad" type="button" title="Refine: gradient ascent of the score over the affine / homography from the current pose (G). With + B-spline, the pose and the spline take the same step."><svg><use href="#i-play"/></svg></button>
+            </div>
+            <div class="card-pose" id="sum-h" title="The current pose: scale, rotation, determinant, translation, perspective"></div>
+            <div class="card-body" hidden>
+              <h3 class="cap">Score</h3>
+              <div class="fields">
+                <div class="span2">
+                  <select id="metric" title="The similarity the climb, the maps and the searches maximize">
+                    <option title="Square-loss mutual information of local features">SMI</option>
+                    <option title="SMI of edge features">SMI (edge)</option>
+                    <option title="Consistent fourth-order Edgeworth mutual information of the two images' normal scores (rank → Φ⁻¹), overlap-weighted (n × MI)">E4 (normal scores)</option>
+                    <option title="−½ log(1 − λ²max): Gaussian-copula mutual information from the top canonical correlation of [z, z², z³] of each image's normal scores, overlap-weighted (n × MI)">λmax MI (normal scores)</option>
+                    <option title="Normalized cross-correlation (same modality only)">NCC</option>
+                  </select>
+                </div>
+              </div>
+              <label class="check" id="exact-lab" title="Off: one global 4×4 whitening per image, score n‖C‖². On: whiten each overlap by its own feature covariance, score n‖L_A⁻¹ C L_B⁻ᵀ‖² (about 1.8× the map cost of global whitening). Applies to the map, the pose score, and the climb."><input type="checkbox" id="exact" checked> exact whitening</label>
+              <label class="check" title="Optimize the mean of the forward and inverse scores. The roto-scale map is then the mean of the map in the fixed frame and the same map computed in the moving frame, cell by cell."><input type="checkbox" id="sym" checked> symmetric <span class="note">forward + inverse</span></label>
+
+              <h3 class="cap">Climb</h3>
+              <p class="hint">Gauss–Newton steps, all on the GPU (λmax's through its top canonical pair; E4, which has no Gauss–Newton matrix, takes gradient line searches). The pose and the score history update every 8 iterations; click a step in the Score tab's list to see it.</p>
+              <div class="fields">
+                <div><label title="Most iterations of the pose climb (each: the hops, then up to three Gauss–Newton steps, then the spline)">iterations</label><input type="number" id="g-iters" value="20" min="1" max="40" step="1"></div>
+              </div>
+              <label class="check" title="Discrete jump to the shift-map peak, then the local steps polish every degree of freedom."><input type="checkbox" id="hop" checked> shift hop</label>
+              <label class="check" title="Jump by the roto-scale peak about the overlay center if the score rises."><input type="checkbox" id="hop-fm"> roto-scale hop</label>
+              <details class="fold">
+                <summary>Advanced</summary>
+                <div class="fields">
+                  <div><label title="Smallest allowed isotropic scale about the roto-scale center. 0.2 forbids more than a 5× shrink.">min scale</label><input type="number" id="rs-smin" value="0.20" min="0.05" max="1" step="0.05"></div>
+                  <div><label title="Largest allowed isotropic scale. 5 forbids more than a 5× enlarge. Out-of-range bands are blank on the roto-scale map.">max scale</label><input type="number" id="rs-smax" value="5" min="1" max="20" step="0.25"></div>
+                  <div><label title="Minimum overlap fraction for the shift map. 0.15 is 15 percent.">min overlap</label><input type="number" id="min-ov" value="0.05" min="0" max="0.5" step="0.01"></div>
+                </div>
+                <div class="fields" id="line-params">
+                  <div><label title="First step length of the gradient ladders (E4's line searches, Brute force's screen)">first step</label><input type="number" id="g-a0" value="0.08" min="0.0005" max="0.5" step="0.005"></div>
+                  <div><label title="Each further step length is this times the last">decay</label><input type="number" id="g-decay" value="0.5" min="0.2" max="0.9" step="0.05"></div>
+                  <div><label title="Step lengths tried at once">tries</label><input type="number" id="g-steps" value="7" min="3" max="12" step="1"></div>
+                </div>
+              </details>
+
+              <div class="spline-only">
+                <h3 class="cap">B-spline</h3>
+                <div class="fields">
+                  <div>
+                    <label title="Target: lattice in the fixed image. Source: lattice in the moving image, then warped by the homography.">lattice frame</label>
+                    <select id="ffd-frame">
+                      <option value="target" selected>fixed (target)</option>
+                      <option value="source">moving (source)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label title="Bending penalty, as a wavelength in fractions of the lattice's size: a wave that long costs as much bending as it can gain in score, shorter waves more. 0 turns the penalty off.">stiffness</label>
+                    <input type="number" id="ffd-stiff" value="0.15" min="0" max="1" step="0.05">
+                  </div>
+                  <div class="end"><button id="btn-ffd-reset" type="button" title="Zero control-point displacements. Restores the regular lattice.">reset spline</button></div>
+                </div>
+              </div>
+
+              <h3 class="cap">Manual</h3>
+              <div class="btns">
+                <button id="btn-snap" title="Apply the shift-map peak">snap to peak</button>
+                <button id="btn-ident" title="Reset the pose to the identity">identity</button>
+                <button id="btn-bake" title="Fold the current tangent step into the homography">bake step</button>
+                <button id="btn-reset-tan" title="Zero the tangent step">zero step</button>
+                <button id="btn-copy-h" type="button" title="Copy the 3×3 homography">copy H</button>
+              </div>
+              <p class="hint" id="keys-hint"></p>
+            </div>
+          </section>
+
+          <section class="card" data-card="near" data-step="search">
+            <div class="card-head">
+              <button type="button" class="card-toggle" aria-expanded="false">
+                <span class="badge"><i>4</i><svg><use href="#i-check"/></svg></span>
+                <span class="name">Brute force</span>
+                <span class="sum" id="sum-search"></span>
+                <span class="res opt">optional</span>
+                <svg class="chev"><use href="#i-chev"/></svg>
+              </button>
+              <button class="go" id="btn-hho-align" type="button" title="Brute force (H): sweep every rotation × scale × shift, or climb a cloud of seeds around the current pose. Not part of Auto."><svg><use href="#i-play"/></svg></button>
+            </div>
+            <div class="card-body" hidden>
+              <div class="seg" id="search-seg">
+                <label title="Rotation × scale × translation from no prior pose"><input type="radio" name="search-mode" value="sweep" checked><span>Global sweep</span></label>
+                <label title="Random seeds around the current pose, each climbed on its own"><input type="radio" name="search-mode" value="cloud"><span>Local cloud</span></label>
+              </div>
+              <div id="search-sweep">
+                <p class="hint">Every rotation × scale of the moving image is scored at every translation on a coarse canvas. The best separated peaks climb with batched Gauss–Newton at full resolution; the current pose is kept unless something scores higher.</p>
+                <div class="fields">
+                  <div><label title="Rotation samples. Over the full circle they are spaced evenly (4° at 90); over a partial range they include both ends.">rotations</label><input type="number" id="sw-nth" value="90" min="1" max="720" step="1"></div>
+                  <div><label title="How the rotation range is given: a half-range about 0°, or from one angle to another. A from–to range may run through ±180° (150 to −150 covers 60° about 180°).">rotation range</label>
+                    <select id="sw-rot-mode">
+                      <option value="pm" selected>± about 0°</option>
+                      <option value="range">from – to</option>
+                    </select>
+                  </div>
+                  <div class="span2" id="sw-rot-pm"><label title="Half-range of rotation, degrees. 180 is the full circle.">± rotation <span class="u">°</span></label><input type="number" id="sw-rot" value="180" min="0" max="180" step="5"></div>
+                  <div class="span2 pair2" id="sw-rot-range" hidden>
+                    <div><label title="First angle of the range, degrees.">from <span class="u">°</span></label><input type="number" id="sw-rot-lo" value="-45" min="-360" max="360" step="5"></div>
+                    <div><label title="Last angle of the range, degrees. Below 'from', the range runs through ±180°.">to <span class="u">°</span></label><input type="number" id="sw-rot-hi" value="45" min="-360" max="360" step="5"></div>
+                  </div>
+                  <div><label title="Scale samples, log-spaced between min and max (7.6% steps at 20 over 0.5–2).">scales</label><input type="number" id="sw-ns" value="20" min="1" max="129" step="1"></div>
+                  <div class="pair2">
+                    <div><label title="Smallest scale of the moving image relative to the prior pose.">min</label><input type="number" id="sw-smin" value="0.5" min="0.05" max="1" step="0.05"></div>
+                    <div><label title="Largest scale of the moving image relative to the prior pose.">max</label><input type="number" id="sw-smax" value="2" min="1" max="20" step="0.1"></div>
+                  </div>
+                </div>
+                <h3 class="cap" title="The other two affine degrees of freedom, along the moving image's own axes. Each multiplies the number of maps by its number of values, so keep both to a few values over small ranges.">Shear and stretch</h3>
+                <div class="fields sw-dof">
+                  <label class="check span2" title="Also sweep shear k: the moving image's x moves by k·y before rotation and scale."><input type="checkbox" id="sw-shear"> shear</label>
+                  <div><label title="Largest shear either way (0.1 ≈ 5.7°).">± shear</label><input type="number" id="sw-shear-max" value="0.1" min="0" max="1" step="0.01"></div>
+                  <div><label title="Shear values, evenly spaced over ± shear (odd counts include 0).">values</label><input type="number" id="sw-nshear" value="3" min="1" max="15" step="1"></div>
+                  <label class="check span2" title="Also sweep stretch: the moving image's x scaled by a and y by 1/a (area kept), before rotation and scale."><input type="checkbox" id="sw-aniso"> stretch</label>
+                  <div><label title="Largest stretch either way, percent: 10 covers a from 1/1.1 to 1.1.">± stretch <span class="u">%</span></label><input type="number" id="sw-aniso-max" value="10" min="0" max="100" step="1"></div>
+                  <div><label title="Stretch values, log-spaced (odd counts include 1).">values</label><input type="number" id="sw-naniso" value="3" min="1" max="15" step="1"></div>
+                </div>
+                <p class="hint" id="sw-count"></p>
+                <label class="check" title="Sweep rotation and scale about the current pose instead of starting with the image centres aligned."><input type="checkbox" id="sw-rel"> about the current pose</label>
+                <details class="fold">
+                  <summary>Advanced</summary>
+                  <div class="fields">
+                    <div>
+                      <label title="Coarse canvas cells per side. The canvas spans the fixed image and the largest scaled moving image. Rotation and scale density matter more than this.">grid</label>
+                      <select id="sw-grid">
+                        <option value="32">32²</option>
+                        <option value="64">64²</option>
+                        <option value="128" selected>128²</option>
+                        <option value="256">256²</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label title="Separated peaks kept by non-maximum suppression and screened with 4 batched steps each (Gauss–Newton lengths plus the Pose gradient ladder). More costs little on the GPU.">candidates</label>
+                      <select id="sw-k">
+                        <option value="8">8</option>
+                        <option value="16">16</option>
+                        <option value="32" selected>32</option>
+                      </select>
+                    </div>
+                    <div><label title="Climbed to convergence, all at once: this many best after the short screen, plus this many best coarse peaks (duplicates merged). 4 costs about the same as 2.">finalists</label><input type="number" id="sw-fin" value="4" min="1" max="16" step="1"></div>
+                  </div>
+                </details>
+              </div>
+              <div id="search-cloud" hidden>
+                <p class="hint">A cloud of poses around the current one. Each seed climbs on its own, and a step is kept only when the score rises.</p>
+                <div class="fields">
+                  <div><label title="Seeds around the current pose, including the unperturbed pose.">seeds</label><input type="number" id="hho-n" value="100" min="1" max="256" step="1"></div>
+                  <div><label title="Most gradient steps a seed may take.">steps</label><input type="number" id="hho-t" value="20" min="1" max="80" step="1"></div>
+                </div>
+                <label class="check" title="Perturb the current homography. Off starts the cloud at the identity."><input type="checkbox" id="hho-rel" checked> around the current pose</label>
+                <label class="check" title="Scale each amplitude so a corner of the image moves by about 1% of the frame. Perspective stays much smaller. A spline kick is 5% of one lattice cell."><input type="checkbox" id="hho-auto" checked> automatic spread</label>
+                <details class="fold">
+                  <summary>Spread</summary>
+                  <div class="fields">
+                    <div><label title="Half-width of translation, as a fraction of the image. 0.01 is about 1% of the width.">translation</label><input type="number" id="peak-tx" value="0.01" min="0.0001" max="0.5" step="0.001"></div>
+                    <div><label title="Half-width of rotation, radians.">rotation <span class="u">rad</span></label><input type="number" id="peak-th" value="0.01" min="0.0001" max="3.15" step="0.001"></div>
+                    <div><label title="Half-width of scale in the Lie algebra. About a 1% zoom at 0.01.">scale</label><input type="number" id="hho-sg" value="0.01" min="0.0001" max="1.2" step="0.001"></div>
+                    <div><label title="Half-width of stretch and shear in the Lie algebra.">shear</label><input type="number" id="hho-sh" value="0.01" min="0.0001" max="0.6" step="0.001"></div>
+                    <div class="homog-only"><label title="Half-width of perspective. Kept much smaller than translation because the same number folds the far side of the image.">perspective</label><input type="number" id="hho-p" value="0.0001" min="0.00001" max="0.04" step="0.0001"></div>
+                    <div><label title="Half-width of each B-spline control point, in the same units as translation.">spline</label><input type="number" id="hho-phi" value="0.01" min="0" max="0.5" step="0.001"></div>
+                    <div><label title="PRNG seed for the cloud.">seed</label><input type="number" id="hho-seed" value="1" min="1" max="999999" step="1"></div>
+                  </div>
+                </details>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </aside>
+    </div>
+
+    <footer class="statusbar">
+      <span class="chip" id="adapter">—</span>
+      <span class="live" id="live"></span>
+      <span class="grow"></span>
+      <span id="busy" hidden></span>
+      <button id="btn-cancel" class="stop" hidden title="Cancel the current job (Esc)">cancel</button>
+      <span id="status-extra"></span>
+      <b id="h-summary" hidden></b>
+    </footer>
+    <div class="log" id="log"></div>
+  </div>
+
+  <input type="file" id="file-left" accept="image/*" hidden>
+  <input type="file" id="file-right" accept="image/*" hidden>
+  <input type="file" id="file-stack-left" accept="image/*" multiple hidden>
+  <input type="file" id="file-stack-right" accept="image/*" multiple hidden>
+
+  <script>
+    document.getElementById("adapter").textContent = "html";
+    window.addEventListener("error", (e) => {
+      const el = document.getElementById("log");
+      if (el) el.textContent += (e.message || e) + "\n";
+      const chip = document.getElementById("adapter");
+      if (chip) chip.textContent = "error";
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      const el = document.getElementById("log");
+      if (el) el.textContent += String(e.reason && e.reason.stack || e.reason) + "\n";
+      const chip = document.getElementById("adapter");
+      if (chip) chip.textContent = "error";
+    });
+  </script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

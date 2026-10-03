@@ -1,0 +1,37 @@
+[project]
+name = "zcmir"
+dynamic = ["version"]  # python/zcmir/__init__.py __version__ (src/engine.zig's version must equal it)
+description = "Multimodal image registration on the GPU (Zig + WGSL over WebGPU), with its web app"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "scripts/licenses/wgpu-native-LICENSE.MIT"]
+authors = [{ name = "Zachary Varley" }]
+keywords = ["image registration", "multimodal", "webgpu", "gpu", "microscopy", "remote sensing"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+images = ["pillow"]
+
+[project.urls]
+Source = "https://github.com/ZacharyVarley/zcmir"
+Issues = "https://github.com/ZacharyVarley/zcmir/issues"
+
+[project.scripts]
+zcmir = "zcmir.app:main"
+
+# `pip install .` builds the wheel for this machine: scripts/build_backend.py runs
+# scripts/build_wheels.py (Zig compiles the library and the wasm; release wheels for every
+# platform come from build_wheels.py directly). Both read the metadata above.
+[build-system]
+requires = ["tomli; python_version < '3.11'"]
+build-backend = "build_backend"
+backend-path = ["scripts"]
