@@ -493,7 +493,7 @@ pub const PosGift = struct {
     /// Phase congruency of a w × h f32 image: Σ|EO| per orientation in cs, the normalized sum into fmap (texels).
     fn phaseCong(self: *PosGift, img: Buf, w: u32, h: u32, fmap: Buf) !void {
         const g = self.g;
-        const nn = fft.planSize(@max(w, h), 1);
+        const nn = fft.planSize(@max(w, h), 1, g.fft_sizes);
         const f = try self.lineFft(nn);
         const gn = (nn + 7) / 8;
         const gx = (w + 7) / 8;
@@ -568,7 +568,7 @@ pub const PosGift = struct {
         const S = self.S;
         const sb = self.side(which);
         const n: u64 = @as(u64, w) * h;
-        const nn0 = fft.planSize(@max(w, h), 1);
+        const nn0 = fft.planSize(@max(w, h), 1, self.g.fft_sizes);
         self.ensure(n, nn0);
         e.promoteTexels(gray, self.gray32, @intCast(n), 0, 0);
         if (rot_deg != 0) {

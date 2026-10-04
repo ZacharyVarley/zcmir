@@ -87,6 +87,8 @@ pub const Gpu = struct {
     gpa: Allocator,
     dev: *Backend.Device,
     lim: Limits,
+    /// FFT lengths every plan on this device takes (settings.fft_sizes, set by the engine)
+    fft_sizes: @import("../fft.zig").Sizes = .ladder,
     /// uniform arena: host staging, one GPU buffer, 256-byte slots
     ustage: []align(16) u8,
     ubuf: u32,

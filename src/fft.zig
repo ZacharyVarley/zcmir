@@ -11,27 +11,33 @@ const RADICES = [_]u32{ 13, 11, 8, 7, 5, 4, 3, 2 };
 const TWE = 1e-12;
 const GRID_X: u32 = 32768;
 
-/// Smallest length ≥ target whose prime factors are all ≤ 13 (and divisible by div).
-pub fn planSize(target: u32, div: u32) u32 {
+/// Which FFT lengths plans use. ladder: 2^a·3^b only (about five per octave, at most 4/3 apart),
+/// so a few dozen shaders cover every image; compact: any length whose prime factors are ≤ 13,
+/// the least padding but a shader per length.
+pub const Sizes = enum { ladder, compact };
+
+/// Smallest length ≥ target in `sizes` (and divisible by div).
+pub fn planSize(target: u32, div: u32, sizes: Sizes) u32 {
     var n = @max(target, 1);
     while (true) : (n += 1) {
-        if (n % div == 0 and smooth(n)) return n;
+        if (n % div == 0 and smooth(n, sizes)) return n;
     }
 }
 
-fn smooth(n0: u32) bool {
+fn smooth(n0: u32, sizes: Sizes) bool {
     var n = n0;
-    for (EMS) |p| while (n % p == 0) {
+    const primes: []const u32 = if (sizes == .ladder) EMS[0..2] else &EMS;
+    for (primes) |p| while (n % p == 0) {
         n /= p;
     };
     return n == 1;
 }
 
-/// The largest radix-factorizable length ≤ maxN (≥ 32).
-pub fn largestSmooth(maxN: u32) u32 {
+/// The largest length ≤ maxN (≥ 32) in `sizes`.
+pub fn largestSmooth(maxN: u32, sizes: Sizes) u32 {
     var n = @max(32, maxN);
     while (n >= 32) : (n -= 1) {
-        if (factorize(n, null)) |_| return n else |_| {}
+        if (smooth(n, sizes)) return n;
     }
     return 32;
 }
@@ -61,10 +67,10 @@ pub var balanced = true;
 
 /// (n, cw, ch): FFT length and the correlation grid for linear (non-wrapping) correlation of a
 /// wa×ha against a wb×hb image, as fft.js linearCorrPlan.
-pub fn linearCorrPlan(wa: u32, ha: u32, wb: u32, hb: u32, maxN0: u32) [3]u32 {
+pub fn linearCorrPlan(wa: u32, ha: u32, wb: u32, hb: u32, maxN0: u32, sizes: Sizes) [3]u32 {
     const mw = @max(wa, wb);
     const mh = @max(ha, hb);
-    const maxN = largestSmooth(maxN0);
+    const maxN = largestSmooth(maxN0, sizes);
     var s: f64 = @min(1.0, @as(f64, @floatFromInt(@max(8, maxN >> 1))) / @as(f64, @floatFromInt(@max(@max(mw, mh), 1))));
     var n: u32 = 8;
     var cw: u32 = 8;
@@ -74,7 +80,7 @@ pub fn linearCorrPlan(wa: u32, ha: u32, wb: u32, hb: u32, maxN0: u32) [3]u32 {
         cw = @max(8, jsRound(@as(f64, @floatFromInt(wa)) * s));
         ch = @max(8, jsRound(@as(f64, @floatFromInt(ha)) * s));
         const need = @max(@max(cw + cw - 1, ch + ch - 1), 32);
-        n = planSize(need, 1);
+        n = planSize(need, 1, sizes);
         if (n > maxN) n = maxN;
         if (n >= cw + cw - 1 and n >= ch + ch - 1) return .{ n, cw, ch };
         s *= 0.85;
@@ -87,15 +93,15 @@ pub fn linearCorrPlan(wa: u32, ha: u32, wb: u32, hb: u32, maxN0: u32) [3]u32 {
 /// (nx, ny, cw, ch): linearCorrPlan with each side's FFT length of its own (the correlation of a
 /// w×h canvas with itself needs 2·cw − 1 by 2·ch − 1 cells; a long thin canvas no longer pays
 /// for a square).
-pub fn linearCorrPlanRect(w: u32, h: u32, maxN0: u32) [4]u32 {
-    const maxN = largestSmooth(maxN0);
+pub fn linearCorrPlanRect(w: u32, h: u32, maxN0: u32, sizes: Sizes) [4]u32 {
+    const maxN = largestSmooth(maxN0, sizes);
     var s: f64 = @min(1.0, @as(f64, @floatFromInt(@max(8, maxN >> 1))) / @as(f64, @floatFromInt(@max(@max(w, h), 1))));
     var i: u32 = 0;
     while (i < 16) : (i += 1) {
         const cw = @max(8, jsRound(@as(f64, @floatFromInt(w)) * s));
         const ch = @max(8, jsRound(@as(f64, @floatFromInt(h)) * s));
-        const nx = @min(planSize(@max(cw + cw - 1, 32), 1), maxN);
-        const ny = @min(planSize(@max(ch + ch - 1, 32), 1), maxN);
+        const nx = @min(planSize(@max(cw + cw - 1, 32), 1, sizes), maxN);
+        const ny = @min(planSize(@max(ch + ch - 1, 32), 1, sizes), maxN);
         if (nx >= cw + cw - 1 and ny >= ch + ch - 1) return .{ nx, ny, cw, ch };
         s *= 0.85;
     }
@@ -107,9 +113,10 @@ fn jsRound(x: f64) u32 {
     return @intFromFloat(@floor(x + 0.5));
 }
 
-/// Largest line length the shared-memory kernel fits (16 B per point).
+/// Largest line length the shared-memory kernel fits (16 B per point), any factorizable length
+/// (plans take their own largest length below it).
 pub fn maxFftN(max_workgroup_storage: u32) u32 {
-    return largestSmooth(@min(2048, max_workgroup_storage / 16));
+    return largestSmooth(@min(2048, max_workgroup_storage / 16), .compact);
 }
 
 fn pickWg(N: u32) u32 {

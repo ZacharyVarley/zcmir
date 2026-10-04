@@ -177,13 +177,14 @@ comptime {
     std.debug.assert(@sizeOf(SU) == 96);
 }
 
-/// FFT lengths the sweep's planes take (all factor into radices ≤ 13 and divide by 16, so column
-/// FFTs batch 4 lines per workgroup); few lengths keep the number of compiled pipelines small.
+/// FFT lengths the sweep's planes take with compact sizes (all factor into radices ≤ 13 and
+/// divide by 16, so column FFTs batch 4 lines per workgroup); few lengths keep the number of
+/// compiled pipelines small. Ladder sizes: the device's 2^a·3^b lengths, divisible by 16.
 const LADDER = [_]u32{ 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 320, 384, 448, 512 };
 
-fn ladderSize(need: u32) u32 {
-    for (LADDER) |L| if (L >= need) return L;
-    return fft.planSize(need, 16);
+fn ladderSize(need: u32, sizes: fft.Sizes) u32 {
+    if (sizes == .compact) for (LADDER) |L| if (L >= need) return L;
+    return fft.planSize(need, 16, sizes);
 }
 
 pub const SweepOpts = struct {
@@ -364,7 +365,7 @@ pub const Sweep = struct {
             const mcy: [2]u32 = if (ok) cells(y0, y1, oy, cell, G) else .{ 0, grid };
             cands[ci] = .{
                 .it = @intCast(i), .is = @intCast(j), .ik = @intCast(ik), .ia = @intCast(ia), .th = th, .s = s, .H = H,
-                .gx0 = mcx[0], .gy0 = mcy[0], .nx = ladderSize(mcx[1] - mcx[0] + Fx - 1), .ny = ladderSize(mcy[1] - mcy[0] + Fy - 1),
+                .gx0 = mcx[0], .gy0 = mcy[0], .nx = ladderSize(mcx[1] - mcx[0] + Fx - 1, g.fft_sizes), .ny = ladderSize(mcy[1] - mcy[0] + Fy - 1, g.fft_sizes),
             };
             // box-filter taps per cell side from the candidate's smallest stretch
             taps[ci] = @floatCast(@min(6, @max(1, @ceil(cell / (sv2(L)[1] * s0) - 1e-3))));

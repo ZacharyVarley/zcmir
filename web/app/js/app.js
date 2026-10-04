@@ -1416,7 +1416,7 @@ async function main() {
       g_a0: num("g-a0", 0.08), g_decay: num("g-decay", 0.5), g_steps: int("g-steps", 7), g_iters: Math.max(1, int("g-iters", 20)),
       clahe: !!$("clahe")?.checked, clahe_grid: 4, clahe_bins: 64,
       band: !!$("band")?.checked, bp_fine: num("bp-fine", 1) || 1, bp_coarse: num("bp-coarse", 6) || 6, invert: !!$("invert")?.checked,
-      half: !!$("half")?.checked,
+      half: !!$("half")?.checked, fft_sizes: $("fft-compact")?.checked ? "compact" : "ladder",
       detector: posGiftOn() ? "pos_gift" : "gls_mift",
       n_octaves: int("d-n_octaves", N_OCTAVES), max_points: int("d-max_points", MAX_POINTS), min_contrast: num("d-min_contrast", MIN_CONTRAST),
       tau: num("d-tau", TAU), radius: num("d-radius", RADIUS), nt: num("d-nt", 0),

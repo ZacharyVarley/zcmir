@@ -214,7 +214,7 @@ pub fn nccShiftMap(e: *Engine, H: Mat3, map: ?[]f32) !engine.ShiftResult {
     const g = &e.g;
     const wa = c.ow;
     const ha = c.oh;
-    const plan = fft.linearCorrPlan(wa, ha, wa, ha, @min(fft.maxFftN(g.lim.max_workgroup_storage), 1024));
+    const plan = fft.linearCorrPlan(wa, ha, wa, ha, @min(fft.maxFftN(g.lim.max_workgroup_storage), 1024), g.fft_sizes);
     const n = plan[0];
     const cw = plan[1];
     const ch = plan[2];

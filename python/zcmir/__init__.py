@@ -36,7 +36,7 @@ __all__ = [
     "Overlay", "TileHeat", "__version__",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 _lib = None
 _wgpu = None

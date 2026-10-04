@@ -18,7 +18,8 @@ A fix to the registration therefore lands in both front ends at once.
 ```
 shaders/            WGSL, the single copy (compiled into the library and the wasm)
 src/gpu/            GPU layer: gpu.zig (policy), native.zig (webgpu.h), web.zig (browser imports)
-src/fft.zig         mixed-radix Stockham FFTs (batched nx × ny, four-step); WGSL generated per length
+src/fft.zig         mixed-radix Stockham FFTs (batched nx × ny, four-step); WGSL generated per length,
+                    lengths from the 2^a·3^b ladder (setting fft_sizes; compact: any 13-smooth length)
 src/smi.zig         SMI features, the dense shift map, the roto-scale (log-polar) map
 src/pose.zig        pose moments, scores, gradients and Gauss–Newton matrices, B-spline gradients
 src/pair.zig        the pair score: forward and inverse directions, symmetric mean

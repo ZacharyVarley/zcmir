@@ -4,6 +4,7 @@
 const std = @import("std");
 const lie = @import("lie.zig");
 const mom = @import("moments.zig");
+const fft = @import("fft.zig");
 
 pub const Metric = enum { smi, smi_edge, e4, lmax, ncc };
 pub const Detector = enum { pos_gift, gls_mift };
@@ -53,6 +54,9 @@ pub const Settings = struct {
     bp_coarse: f64 = 6,
     invert: bool = false,
     half: bool = true,
+    /// FFT lengths: ladder (2^a·3^b, a few dozen shaders for any image, slightly more padding) or
+    /// compact (the smallest length with prime factors ≤ 13: least work, a new shader per length)
+    fft_sizes: fft.Sizes = .ladder,
     // ── detection / matching ──
     detector: Detector = .pos_gift,
     // GLS-MIFT

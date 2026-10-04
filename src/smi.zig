@@ -369,7 +369,7 @@ pub const Smi = struct {
             const c2: u64 = @as(u64, cap) * cap;
             if (@max(c2 * 4 * plan.n_corr, c2 * 8 * IFFT_CHUNK) <= bind) break;
         }
-        return fft.largestSmooth(cap);
+        return fft.largestSmooth(cap, self.g.fft_sizes);
     }
 
     /// The batched 2-D FFT of nx × ny planes (maps are at most hw_max_n per side, which it
@@ -505,7 +505,7 @@ pub const Smi = struct {
         _ = b;
         const g = self.g;
         const plan = &self.plans[@intFromBool(opt.planExact())];
-        const nmc = if (opt.cap == 0) autoShiftPlan(fr.w, fr.h) else fft.linearCorrPlanRect(fr.w, fr.h, self.capN(plan, opt.cap));
+        const nmc = if (opt.cap == 0) autoShiftPlan(fr.w, fr.h) else fft.linearCorrPlanRect(fr.w, fr.h, self.capN(plan, opt.cap), self.g.fft_sizes);
         const nx = nmc[0];
         const ny = nmc[1];
         const cw = nmc[2];
@@ -559,7 +559,7 @@ pub const Smi = struct {
             // auto: a power of two, MAP_AUTO_MIN–MAP_AUTO_MAX angles (0.7° at 512)
             n = std.math.clamp(std.math.ceilPowerOfTwoAssert(u32, n_ring), MAP_AUTO_MIN, MAP_AUTO_MAX);
         } else {
-            n = fft.planSize(n_ring, 1);
+            n = fft.planSize(n_ring, 1, self.g.fft_sizes);
             const cap = self.capN(plan, opt.cap);
             if (n > cap) n = cap;
         }
