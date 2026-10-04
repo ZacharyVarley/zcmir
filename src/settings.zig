@@ -44,7 +44,7 @@ pub const Settings = struct {
     g_a0: f64 = 0.08,
     g_decay: f64 = 0.5,
     g_steps: u32 = 7,
-    g_iters: u32 = 20,
+    g_iters: u32 = 100,
     // ── preprocessing ──
     clahe: bool = true,
     clahe_grid: u32 = 4,
@@ -69,9 +69,15 @@ pub const Settings = struct {
     auto_nt: bool = true,
     /// GLS-MIFT: also describe each keypoint at its second orientation
     second_ori: bool = true,
-    inlier_px: f64 = 5,
+    /// inlier distance of the robust fits (pixels)
+    inlier_px: f64 = 10,
+    /// limits on a fitted pose (match.zig poseCheck): its scale, its stretch (the ratio of its two
+    /// local scales) and its perspective (the ratio of its local scale between the moving
+    /// image's corners)
     scale_lo: f64 = 0.2,
     scale_hi: f64 = 5,
+    max_aniso: f64 = 5,
+    max_persp: f64 = 3,
     n_trials: u32 = 100000,
     seed: u32 = 12345,
     n_sigma: u32 = 4,
@@ -100,6 +106,13 @@ pub const Settings = struct {
     pg_gsig: f64 = 3,
     pg_pos_p1: f64 = 20,
     pg_pos_k: u32 = 20,
+    /// nearest-neighbour ratio test: the best descriptor distance over the second best, at most
+    pg_ratio: f64 = 0.6,
+    /// POS guided re-matching after the pooled fit; its homography's inlier distance, then the
+    /// distance of the correspondences it keeps
+    pg_pos: bool = true,
+    pg_pos_search_px: f64 = 10,
+    pg_pos_px: f64 = 3,
     /// POS-GIFT as the authors' released MATLAB (overrides the POS-GIFT settings above)
     pg_released: bool = false,
     // ── search ──

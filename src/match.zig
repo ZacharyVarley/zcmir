@@ -85,10 +85,96 @@ fn scaleOk(H: Mat3, lo: f64, hi: f64) bool {
     return sc >= lo and sc <= hi;
 }
 
-fn modelOk(H: Mat3, px: []const f64, py: []const f64, idx: []const usize, lo: f64, hi: f64) bool {
+/// What a fitted pose may do to the moving image (settings scale_lo, scale_hi, max_aniso,
+/// max_persp), and the image it is checked on (w × h, 1-based pixels).
+pub const Limits = struct {
+    w: f64,
+    h: f64,
+    scale_lo: f64 = 0.2,
+    scale_hi: f64 = 5,
+    /// largest stretch: the ratio of the pose's two local scales at the image centre
+    max_aniso: f64 = 5,
+    /// largest perspective: the ratio of the local scale between the image's corners
+    max_persp: f64 = 3,
+};
+
+pub const Verdict = enum(u32) {
+    ok,
+    /// a coefficient is not a finite number
+    not_finite,
+    /// the horizon (points sent to infinity) crosses the moving image: it would fold (a bow-tie)
+    horizon,
+    /// the image is mirrored
+    mirrored,
+    scale,
+    stretch,
+    perspective,
+
+    pub fn text(v: Verdict) []const u8 {
+        return switch (v) {
+            .ok => "ok",
+            .not_finite => "not a finite pose",
+            .horizon => "its horizon crosses the moving image (the image folds)",
+            .mirrored => "it mirrors the image",
+            .scale => "its scale is outside the scale limits",
+            .stretch => "it stretches the image beyond the stretch limit",
+            .perspective => "its perspective is beyond the perspective limit",
+        };
+    }
+};
+
+/// The pose's two local scales (singular values of its Jacobian) at (x, y), larger first.
+fn localScales(H: Mat3, x: f64, y: f64) [2]f64 {
+    const z = H[6] * x + H[7] * y + H[8];
+    const X = (H[0] * x + H[1] * y + H[2]) / z;
+    const Y = (H[3] * x + H[4] * y + H[5]) / z;
+    const a = (H[0] - X * H[6]) / z;
+    const b = (H[1] - X * H[7]) / z;
+    const c = (H[3] - Y * H[6]) / z;
+    const d = (H[4] - Y * H[7]) / z;
+    const q = a * a + b * b + c * c + d * d;
+    const det = @abs(a * d - b * c);
+    const disc = @sqrt(@max(q * q - 4 * det * det, 0));
+    return .{ @sqrt((q + disc) / 2), @sqrt(@max((q - disc) / 2, 0)) };
+}
+
+/// Whether H is a plausible pose of the moving image: finite, its horizon off the image (so the
+/// image's outline stays a convex quadrilateral), not mirrored, and within the limits.
+pub fn poseCheck(H: Mat3, l: Limits) Verdict {
+    for (H) |v| if (!std.math.isFinite(v)) return .not_finite;
+    const cs = [4][2]f64{ .{ 1, 1 }, .{ l.w, 1 }, .{ l.w, l.h }, .{ 1, l.h } };
+    var zmin = std.math.inf(f64);
+    var zmax = -std.math.inf(f64);
+    for (cs) |c| {
+        const z = H[6] * c[0] + H[7] * c[1] + H[8];
+        zmin = @min(zmin, z);
+        zmax = @max(zmax, z);
+    }
+    if (!(zmin * zmax > 0) or @min(@abs(zmin), @abs(zmax)) < 1e-9 * @max(@abs(zmin), @abs(zmax))) return .horizon;
+    // the Jacobian's determinant is det(H) / z³: one sign over the image once z has one
+    const det = H[0] * (H[4] * H[8] - H[5] * H[7]) - H[1] * (H[3] * H[8] - H[5] * H[6]) + H[2] * (H[3] * H[7] - H[4] * H[6]);
+    if (!(det * zmin > 0)) return .mirrored;
+    const mid = localScales(H, (1 + l.w) / 2, (1 + l.h) / 2);
+    const sc = @sqrt(mid[0] * mid[1]);
+    if (!(sc >= l.scale_lo and sc <= l.scale_hi)) return .scale;
+    if (!(mid[0] <= l.max_aniso * mid[1])) return .stretch;
+    var lo = std.math.inf(f64);
+    var hi: f64 = 0;
+    for (cs) |c| {
+        const s = localScales(H, c[0], c[1]);
+        const g = @sqrt(s[0] * s[1]);
+        lo = @min(lo, g);
+        hi = @max(hi, g);
+    }
+    if (!(hi <= l.max_persp * lo)) return .perspective;
+    return .ok;
+}
+
+fn modelOk(H: Mat3, px: []const f64, py: []const f64, idx: []const usize, o: Options) bool {
     if (!std.math.isFinite(H[0])) return false;
-    if (idx.len == 0) return scaleOk(H, lo, hi);
-    return cheiralityOk(H, px, py, idx) and scaleOk(H, lo, hi);
+    if (o.limits) |l| if (poseCheck(H, l) != .ok) return false;
+    if (idx.len == 0) return scaleOk(H, o.scale_lo, o.scale_hi);
+    return cheiralityOk(H, px, py, idx) and scaleOk(H, o.scale_lo, o.scale_hi);
 }
 
 pub fn reproj2(H: Mat3, px: []const f64, py: []const f64, qx: []const f64, qy: []const f64, out: []f64) void {
@@ -131,7 +217,7 @@ fn fitPts(gpa: std.mem.Allocator, p: Pts, idx: []const usize, w: ?[]const f64, h
     return if (homog) lie.HHomographyFromPts(src, dst, w) else lie.HAffineFromPts(src, dst, w);
 }
 
-fn loFit(gpa: std.mem.Allocator, p: Pts, err: []const f64, tau2: f64, homog: bool, weighted: bool, lo: f64, hi: f64) !?Mat3 {
+fn loFit(gpa: std.mem.Allocator, p: Pts, err: []const f64, tau2: f64, homog: bool, weighted: bool, o: Options) !?Mat3 {
     var idx: std.ArrayList(usize) = .empty;
     defer idx.deinit(gpa);
     var w: std.ArrayList(f64) = .empty;
@@ -144,7 +230,7 @@ fn loFit(gpa: std.mem.Allocator, p: Pts, err: []const f64, tau2: f64, homog: boo
     }
     if (idx.items.len < @as(usize, if (homog) 4 else 3)) return null;
     const H = try fitPts(gpa, p, idx.items, w.items, homog);
-    return if (modelOk(H, p.px, p.py, idx.items, lo, hi)) H else null;
+    return if (modelOk(H, p.px, p.py, idx.items, o)) H else null;
 }
 
 fn scoreH(H: Mat3, p: Pts, err: []f64, tau2: f64, mag: bool) struct { q: f64, ninl: u32 } {
@@ -172,9 +258,12 @@ pub const Options = struct {
     seed: u32 = 1,
     scale_lo: f64 = 0.2,
     scale_hi: f64 = 5,
+    /// every candidate and refit must also pass poseCheck on the moving image
+    limits: ?Limits = null,
 };
 
-/// Robust fit of q ≈ H(p); `scores` (optional, higher is better) orders PROSAC's sampling.
+/// Robust fit of q ≈ H(p); `scores` (optional, higher is better) orders PROSAC's sampling (uniform
+/// sampling without them).
 pub fn fitRobust(gpa: std.mem.Allocator, px0: []const f64, py0: []const f64, qx0: []const f64, qy0: []const f64, scores: ?[]const f64, o: Options) !Fit {
     const n = px0.len;
     const homog = o.homography;
@@ -205,7 +294,9 @@ pub fn fitRobust(gpa: std.mem.Allocator, px0: []const f64, py0: []const f64, qx0
         p.qy[i] = qy0[k];
     }
     var rng = Rng.init(o.seed);
-    var pool: usize = m;
+    // PROSAC grows its sampling pool down a quality ranking; without one (the pooled per-octave
+    // matches come in keypoint order, neighbours first) every sample draws from all the matches
+    var pool: usize = if (scores != null) m else n;
     var Tn: f64 = 1;
     const mag = o.method == .magsac;
     var best_q: f64 = -1;
@@ -219,7 +310,8 @@ pub fn fitRobust(gpa: std.mem.Allocator, px0: []const f64, py0: []const f64, qx0
             Tn = Tn * @as(f64, @floatFromInt(pool)) / @as(f64, @floatFromInt(@max(pool - m, 1)));
         }
         // sampleIdx(rand, m, pool, avoidLast = pool > m)
-        const avoid_last = pool > m;
+        // (the newest pool member joins every sample only while the pool grows down a ranking)
+        const avoid_last = scores != null and pool > m;
         var samp: [4]usize = undefined;
         var ns: usize = 0;
         var guard: u32 = 0;
@@ -237,11 +329,11 @@ pub fn fitRobust(gpa: std.mem.Allocator, px0: []const f64, py0: []const f64, qx0
         if (ns != m) continue;
         if (!geometricOk(p.px, p.py, p.qx, p.qy, samp[0..m])) continue;
         const H = try fitPts(gpa, p, samp[0..m], null, homog);
-        if (!modelOk(H, p.px, p.py, samp[0..m], o.scale_lo, o.scale_hi)) continue;
+        if (!modelOk(H, p.px, p.py, samp[0..m], o)) continue;
         used += 1;
         var cur = scoreH(H, p, err, tau2, mag);
         var Hcur = H;
-        if (try loFit(gpa, p, err, tau2, homog, mag, o.scale_lo, o.scale_hi)) |Hlo| {
+        if (try loFit(gpa, p, err, tau2, homog, mag, o)) |Hlo| {
             const s2 = scoreH(Hlo, p, err, tau2, mag);
             if (s2.q >= cur.q) {
                 cur = s2;
@@ -250,7 +342,7 @@ pub fn fitRobust(gpa: std.mem.Allocator, px0: []const f64, py0: []const f64, qx0
         }
         if (mag) {
             reproj2(Hcur, p.px, p.py, p.qx, p.qy, err);
-            if (try loFit(gpa, p, err, tau2, homog, true, o.scale_lo, o.scale_hi)) |H2| {
+            if (try loFit(gpa, p, err, tau2, homog, true, o)) |H2| {
                 const s3 = scoreH(H2, p, err, tau2, mag);
                 if (s3.q >= cur.q) {
                     cur = s3;
@@ -265,7 +357,7 @@ pub fn fitRobust(gpa: std.mem.Allocator, px0: []const f64, py0: []const f64, qx0
     }
     if (best_n > 0) {
         reproj2(best_h, p.px, p.py, p.qx, p.qy, err);
-        if (try loFit(gpa, p, err, tau2, homog, mag, o.scale_lo, o.scale_hi)) |Hf| best_h = Hf;
+        if (try loFit(gpa, p, err, tau2, homog, mag, o)) |Hf| best_h = Hf;
         best_n = scoreH(best_h, p, err, tau2, false).ninl;
     }
     return .{ .H = best_h, .ninl = best_n, .quality = best_q, .trials = used };

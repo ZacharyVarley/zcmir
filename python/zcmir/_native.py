@@ -46,7 +46,7 @@ class DetectResult(ctypes.Structure):
 class MatchResult(ctypes.Structure):
     _fields_ = [
         ("H", Mat), ("ninl", U32), ("n_corr", U32), ("ninl_aff", U32), ("pos_n", U32), ("pos_inl", U32),
-        ("has_rot", U32), ("rot_deg", F64),
+        ("has_rot", U32), ("rot_deg", F64), ("pos_kept", U32), ("_pad", U32),
     ]
 
 
@@ -116,6 +116,7 @@ _SIGS = {
     "zc_set_ffd": ([P, f32p, SZ], I32),
     "zc_get_ffd": ([P, f32p, SZ], SZ),
     "zc_set_pose": ([P, f64p], None),
+    "zc_fit_check": ([P, f64p], U32),
     "zc_get_pose": ([P, f64p], None),
     "zc_events": ([P, ctypes.c_char_p, SZ], SZ),
     "zc_score": ([P, f64p, f64p], I32),

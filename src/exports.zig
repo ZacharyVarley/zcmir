@@ -367,6 +367,11 @@ export fn zc_keypoint_frames(e: *Engine, side: u32, out: [*]f32, cap_points: usi
     return @intCast(n);
 }
 
+/// The sanity check of a pose fitted to matches (match.zig Verdict): 0 passes, else why not.
+export fn zc_fit_check(e: *Engine, H: *const [9]f64) u32 {
+    return @intFromEnum(e.fitCheck(H.*));
+}
+
 /// Match of each moving keypoint (fixed keypoint index, 0xffffffff none); returns the count.
 export fn zc_matches(e: *Engine, out: [*]u32, cap: usize) i32 {
     const n = e.matches(out[0..cap]) catch |err| return failed(e, "matches", err);

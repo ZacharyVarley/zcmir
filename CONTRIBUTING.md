@@ -28,7 +28,7 @@ src/gclimb.zig      Refine on the GPU: batches of iterations (hops, Gauss–Newt
 src/climb.zig       what Refine and the searches share (the acceptance rule, the step ladder)
 src/gls.zig         GLS-MIFT detection and matching; CLAHE, band pass, invert
 src/posgift.zig     POS-GIFT (phase congruency, GIFT descriptors, rotation search, POS re-matching)
-src/match.zig       PROSAC / MAGSAC++ robust fits
+src/match.zig       PROSAC / MAGSAC++ robust fits; poseCheck, the sanity check every fitted pose passes
 src/search.zig      brute force: the sweep (rotation × scale [× shear × stretch], each candidate's
                     FFTs sized to its footprint) and the seed cloud
 src/overlay.zig     overlay images, NCC map, tile heat

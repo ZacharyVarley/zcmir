@@ -441,17 +441,43 @@ pub fn HAffineFromPts(src: []const [2]f64, dst: []const [2]f64, wts: ?[]const f6
     return .{ atb[0], atb[1], atb[2], atb[3], atb[4], atb[5], 0, 0, 1 };
 }
 
-/// Homography from point pairs: smallest eigenvector of the DLT normal matrix by inverse
-/// iteration (lie.js HHomographyFromPts).
+/// Hartley normalization of weighted points: (cx, cy, s) with s·(p − c) of mean length √2.
+fn hartley(pts: []const [2]f64, wts: ?[]const f64) [3]f64 {
+    var sw: f64 = 0;
+    var cx: f64 = 0;
+    var cy: f64 = 0;
+    for (pts, 0..) |p, i| {
+        const wt = if (wts) |w| w[i] else 1;
+        if (wt <= 0) continue;
+        sw += wt;
+        cx += wt * p[0];
+        cy += wt * p[1];
+    }
+    if (sw <= 0) return .{ 0, 0, 1 };
+    cx /= sw;
+    cy /= sw;
+    var d: f64 = 0;
+    for (pts, 0..) |p, i| {
+        const wt = if (wts) |w| w[i] else 1;
+        if (wt > 0) d += wt * std.math.hypot(p[0] - cx, p[1] - cy);
+    }
+    return .{ cx, cy, std.math.sqrt2 / @max(d / sw, 1e-12) };
+}
+
+/// Homography from point pairs: the DLT on Hartley-normalized coordinates (in pixels its normal
+/// matrix is too ill-conditioned to solve), smallest eigenvector by inverse iteration (lie.js
+/// HHomographyFromPts).
 pub fn HHomographyFromPts(src: []const [2]f64, dst: []const [2]f64, wts: ?[]const f64) Mat3 {
+    const na = hartley(src, wts);
+    const nb = hartley(dst, wts);
     var ata: [81]f64 = @splat(0);
     for (src, dst, 0..) |s, d, i| {
         const wt = if (wts) |w| w[i] else 1;
         if (wt <= 0) continue;
-        const x = s[0];
-        const y = s[1];
-        const u = d[0];
-        const v = d[1];
+        const x = na[2] * (s[0] - na[0]);
+        const y = na[2] * (s[1] - na[1]);
+        const u = nb[2] * (d[0] - nb[0]);
+        const v = nb[2] * (d[1] - nb[1]);
         const rows = [2][9]f64{
             .{ -x, -y, -1, 0, 0, 0, u * x, u * y, u },
             .{ 0, 0, 0, -x, -y, -1, v * x, v * y, v },
@@ -473,7 +499,10 @@ pub fn HHomographyFromPts(src: []const [2]f64, dst: []const [2]f64, wts: ?[]cons
         if (nrm == 0) nrm = 1;
         for (0..9) |j| v[j] = x[j] / nrm;
     }
-    return projectGroup(v, .homography);
+    // back to pixels: Tb⁻¹ · Hn · Ta
+    const Ta: Mat3 = .{ na[2], 0, -na[2] * na[0], 0, na[2], -na[2] * na[1], 0, 0, 1 };
+    const Tbi: Mat3 = .{ 1 / nb[2], 0, nb[0], 0, 1 / nb[2], nb[1], 0, 0, 1 };
+    return projectGroup(mul3(Tbi, mul3(v, Ta)), .homography);
 }
 
 fn solveSquare9(A0: *const [81]f64, b0: *const [9]f64, out: *[9]f64) void {

@@ -237,6 +237,20 @@ for det, period in (("pos_gift", 2 * np.pi), ("gls_mift", np.pi)):
     check(f"keypoint frames ({det}) turn with the pose", len(fl) == len(kl) and len(fr) == len(kr) and np.all(fl[:, 1] > 0)
           and len(i) > 20 and ok.mean() > 0.9, f"{ok.sum()}/{len(i)} matches within 20° of {np.degrees(rot):.1f}°")
 reg.configure(detector="pos_gift")
+# the sanity check of fitted poses, and every robust fit under it
+bow = H.copy()
+bow[2, :2] = [-1.5 / lw, 0]  # its horizon crosses the moving image
+mir = H @ np.diag([-1.0, 1, 1])
+check("fit check", reg.fit_check(H) is None and "horizon" in reg.fit_check(bow) and "mirror" in reg.fit_check(mir)
+      and "scale" in reg.fit_check(np.diag([8.0, 8, 1])), f"{reg.fit_check(bow)}; {reg.fit_check(mir)}")
+for det in ("pos_gift", "gls_mift"):
+    for method in ("lofsc", "prosac", "magsac"):
+        reg.configure(detector=det, match_method=method)
+        reg.detect()
+        m = reg.match()
+        e = corner_dist(m.H, H, lw, lh)
+        check(f"match {det} / {method}", e < 8 and m.inliers > 20 and reg.fit_check(m.H) is None, f"{e:.2f} px from the registered pose, {m.inliers} inliers")
+reg.configure(detector="pos_gift", match_method="lofsc")
 reg.configure(search_mode="sweep")
 reg.pose = T @ H
 reg.search()

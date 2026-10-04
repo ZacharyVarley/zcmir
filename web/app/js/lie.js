@@ -375,11 +375,33 @@ function solveSquare(A0, b0, n) {
   return b;
 }
 
+/** Hartley normalization of weighted points: [cx, cy, s] with s·(p − c) of mean length √2. */
+function hartley(pts, wts) {
+  let sw = 0, cx = 0, cy = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const wt = wts ? +wts[i] || 0 : 1;
+    if (wt <= 0) continue;
+    sw += wt; cx += wt * pts[i][0]; cy += wt * pts[i][1];
+  }
+  if (sw <= 0) return [0, 0, 1];
+  cx /= sw; cy /= sw;
+  let d = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const wt = wts ? +wts[i] || 0 : 1;
+    if (wt > 0) d += wt * Math.hypot(pts[i][0] - cx, pts[i][1] - cy);
+  }
+  return [cx, cy, Math.SQRT2 / Math.max(d / sw, 1e-12)];
+}
+
+/** The DLT on Hartley-normalized coordinates (in pixels its normal matrix is too ill-conditioned
+ *  to solve), as lie.zig HHomographyFromPts. */
 export function HHomographyFromPts(src, dst, wts = null) {
   const n = src.length;
+  const na = hartley(src, wts), nb = hartley(dst, wts);
   const ATA = Array.from({ length: 9 }, () => new Float64Array(9));
   for (let i = 0; i < n; i++) {
-    const [x, y] = src[i], [u, v] = dst[i];
+    const x = na[2] * (src[i][0] - na[0]), y = na[2] * (src[i][1] - na[1]);
+    const u = nb[2] * (dst[i][0] - nb[0]), v = nb[2] * (dst[i][1] - nb[1]);
     const wt = wts ? +wts[i] || 0 : 1;
     if (wt <= 0) continue;
     const rows = [
@@ -397,7 +419,10 @@ export function HHomographyFromPts(src, dst, wts = null) {
     nrm = Math.sqrt(nrm) || 1;
     for (let j = 0; j < 9; j++) v[j] = x[j] / nrm;
   }
-  return projectGroup(v, "homography");
+  // back to pixels: Tb⁻¹ · Hn · Ta
+  const Ta = [na[2], 0, -na[2] * na[0], 0, na[2], -na[2] * na[1], 0, 0, 1];
+  const Tbi = [1 / nb[2], 0, nb[0], 0, 1 / nb[2], nb[1], 0, 0, 1];
+  return projectGroup(mul3(Tbi, mul3(Array.from(v), Ta)), "homography");
 }
 
 /** Solve the n×n system A x = b (row-major A), partial pivoting. null if singular. */

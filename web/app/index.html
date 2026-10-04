@@ -501,7 +501,7 @@
             </div>
             <div class="card-body" hidden>
               <div id="gls-match-opts">
-                <label class="stacked" title="Robust model fit after nearest-neighbour matching. Lo-FSC is the original GPU 3-point affine. PROSAC + predicates and MAGSAC++ are 4-point homography alternatives.">robust fit
+                <label class="stacked" title="Robust model fit of the matches (with POS-GIFT: of the pooled matches, before POS re-matching). Lo-FSC is the GPU 3-point affine. PROSAC + predicates and MAGSAC++ fit the chosen model (affine or homography) from samples that keep their orientation, with every candidate held to the pose limits.">robust fit
                   <select id="match-method">
                     <option value="lofsc" selected>Lo-FSC (3-point affine)</option>
                     <option value="prosac">PROSAC + predicates</option>
@@ -512,10 +512,14 @@
               <div class="detect" id="match"></div>
               <div id="gls-match-opts2">
                 <label class="check" title="Match every scale with every scale. Keep a level pair only when its own affine agrees, then fit one model."><input type="checkbox" id="opt-octave" checked> per octave</label>
-                <label class="check" title="Drop a match unless it is also the nearest neighbor in the other direction."><input type="checkbox" id="mutual"> mutual nearest neighbor</label>
+                <label class="check" id="mutual-lab" title="Drop a match unless it is also the nearest neighbor in the other direction."><input type="checkbox" id="mutual"> mutual nearest neighbor</label>
+              </div>
+              <div id="pg-match-opts">
+                <label class="check" title="After the robust fit: describe the keypoints again at its rotation and scale, match each near where the fit sends it, and fit the model to the matches that agree. The fit with the higher score is kept."><input type="checkbox" id="pg-pos" checked> POS re-matching</label>
+                <div class="detect" id="pg-match"></div>
               </div>
               <div class="btns">
-                <button id="btn-refit" type="button" title="Least-squares model from the current inliers">refit from inliers</button>
+                <button id="btn-refit" type="button" title="The least-squares model (affine or homography) through the matching step's inliers becomes the pose. The inliers stay the matching step's, so a second press changes nothing. A fit outside the pose limits is not applied.">refit from inliers</button>
               </div>
               <p class="hint" id="match-hint">Lo-FSC fits a 3-point affine. The inlier radius selects that model and recolors the overlay.</p>
             </div>
@@ -552,7 +556,7 @@
               <h3 class="cap">Climb</h3>
               <p class="hint">Gauss–Newton steps, all on the GPU (λmax's through its top canonical pair; E4, which has no Gauss–Newton matrix, takes gradient line searches). The pose and the score history update every 8 iterations; click a step in the Score tab's list to see it.</p>
               <div class="fields">
-                <div><label title="Most iterations of the pose climb (each: the hops, then up to three Gauss–Newton steps, then the spline)">iterations</label><input type="number" id="g-iters" value="20" min="1" max="40" step="1"></div>
+                <div><label title="Most iterations of the pose climb (each: the hops, then up to three Gauss–Newton steps, then the spline)">iterations</label><input type="number" id="g-iters" value="100" min="1" max="1000" step="1"></div>
               </div>
               <label class="check" title="Discrete jump to the shift-map peak, then the local steps polish every degree of freedom."><input type="checkbox" id="hop" checked> shift hop</label>
               <label class="check" title="Jump by the roto-scale peak about the overlay center if the score rises."><input type="checkbox" id="hop-fm"> roto-scale hop</label>

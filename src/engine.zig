@@ -15,6 +15,7 @@ const climb_mod = @import("climb.zig");
 const gclimb_mod = @import("gclimb.zig");
 const gls_mod = @import("gls.zig");
 const pg_mod = @import("posgift.zig");
+const match_mod = @import("match.zig");
 const search_mod = @import("search.zig");
 const overlay_mod = @import("overlay.zig");
 const export_mod = @import("export.zig");
@@ -23,7 +24,7 @@ const Gpu = gpu_mod.Gpu;
 const Buf = gpu_mod.Buf;
 pub const Settings = settings_mod.Settings;
 
-pub const version = "0.1.2";
+pub const version = "0.1.3";
 
 /// Result of a shift map. Lags are in fixed-image pixels: translating the moving image by
 /// (−dx, −dy) after H moves it onto the peak (the browser app's "shift hop"), i.e. the corrected
@@ -122,6 +123,9 @@ pub const MatchResult = extern struct {
     pos_inl: u32 = 0,
     has_rot: u32 = 0,
     rot_deg: f64 = 0,
+    /// POS-GIFT: H is POS's fit (else the pooled affine fit)
+    pos_kept: u32 = 0,
+    _pad: u32 = 0,
 };
 
 pub const Flags = struct {
@@ -392,7 +396,7 @@ pub const Engine = struct {
         for (mj) |*j| if (j.* != 0xffffffff and j.* >= n2) {
             j.* = 0xffffffff;
         };
-        @import("match.zig").matchDots(da, db, mj, n1, dim, out[0..n1]);
+        match_mod.matchDots(da, db, mj, n1, dim, out[0..n1]);
         return n1;
     }
 
@@ -456,6 +460,25 @@ pub const Engine = struct {
         };
     }
 
+    /// What a fitted pose may do to the moving image (settings scale_lo … max_persp).
+    fn fitLimits(self: *const Engine) match_mod.Limits {
+        const s = &self.set;
+        return .{
+            .w = @floatFromInt(@max(self.sides[0].w, 2)), .h = @floatFromInt(@max(self.sides[0].h, 2)),
+            .scale_lo = s.scale_lo, .scale_hi = s.scale_hi, .max_aniso = @max(1, s.max_aniso), .max_persp = @max(1, s.max_persp),
+        };
+    }
+
+    /// The sanity check of a pose fitted to matches (match.zig poseCheck).
+    pub fn fitCheck(self: *const Engine, H: lie.Mat3) match_mod.Verdict {
+        return match_mod.poseCheck(H, self.fitLimits());
+    }
+
+    fn warnFit(self: *Engine) void {
+        const v = self.fitCheck(self.H);
+        if (v != .ok) self.events.log("warning: the matching fit fails the sanity check: {s}", .{v.text()});
+    }
+
     fn dropPosGift(self: *Engine) void {
         if (self.pg_det) |*d| d.deinit(self.gpa);
         self.pg_det = null;
@@ -503,6 +526,20 @@ pub const Engine = struct {
             .gsig = cf.f(s.pg_gsig, 1, 10),
             .pos_p1 = cf.f(s.pg_pos_p1, 4, 40),
             .pos_k = cf.u(s.pg_pos_k, 4, 64),
+            .ratio = cf.f(s.pg_ratio, 0.3, 1),
+            .match = if (s.per_octave) .octave else .nn,
+            .inlier_px = cf.f(s.inlier_px, 0.5, 100),
+            .fit = .{
+                .method = switch (s.match_method) {
+                    .lofsc => .lofsc,
+                    .prosac => .prosac,
+                    .magsac => .magsac,
+                },
+                .homography = s.group == .homography and s.match_method != .lofsc,
+            },
+            .pos = s.pg_pos,
+            .pos_search_px = cf.f(s.pg_pos_search_px, 1, 100),
+            .pos_px = cf.f(s.pg_pos_px, 0.5, 50),
             .det_map = if (s.pg_corners) .min_moment else .pcsum,
         };
         if (s.pg_released) p = p.released();
@@ -559,17 +596,41 @@ pub const Engine = struct {
         const d = &(self.pg_det orelse return error.DetectFirst);
         const pg = try self.posGift();
         const r = try pg.match(self.workImage(0), self.workImage(1), d);
-        self.H = r.H;
+        // Two candidates: the pooled fit and POS's. POS keeps the correspondences within pos_px of
+        // one homography: few on a deformed pair, and the fit through them can fall far behind the
+        // pooled fit. A candidate that fails the sanity check gives way to one that passes;
+        // otherwise the higher pose score stays.
+        var pos_kept = r.pos_h;
+        var buf3: [160]u8 = undefined;
+        var kept: []const u8 = "";
+        if (r.pos_h) {
+            const v_pos = self.fitCheck(r.H);
+            const v_aff = self.fitCheck(r.Haff);
+            if ((v_pos == .ok) != (v_aff == .ok)) {
+                pos_kept = v_pos == .ok;
+                if (!pos_kept) kept = std.fmt.bufPrint(&buf3, "  · the pooled fit stays (POS's: {s})", .{v_pos.text()}) catch "";
+            } else {
+                const s_pos = (try self.score(r.H)).mean;
+                const s_aff = (try self.score(r.Haff)).mean;
+                if (!(s_pos >= s_aff)) {
+                    pos_kept = false;
+                    kept = std.fmt.bufPrint(&buf3, "  · the pooled fit stays (score {e:.3} against {e:.3})", .{ s_aff, s_pos }) catch "";
+                }
+            }
+        }
+        self.H = if (pos_kept) r.H else r.Haff;
         self.matched = true;
         self.match_pos = true;
         var buf: [96]u8 = undefined;
         const rot = if (r.rot_deg) |deg| std.fmt.bufPrint(&buf, "  rotation {d}°", .{deg}) catch "" else "";
         var buf2: [96]u8 = undefined;
         const pos = if (r.pos_ran) std.fmt.bufPrint(&buf2, "  POS {d} → {d} inliers", .{ r.pos_n, r.pos_inl }) catch "" else "";
-        self.events.log("match POS-GIFT{s}  pooled {d}  affine inliers {d}{s}", .{ rot, r.pooled, r.ninl_aff, pos });
+        self.events.log("match POS-GIFT{s}  pooled {d}  fit inliers {d}{s}{s}", .{ rot, r.pooled, r.ninl_aff, pos, kept });
+        self.warnFit();
         return .{
-            .H = r.H, .ninl = if (r.pos_h) r.pos_inl else r.ninl_aff, .n_corr = r.pooled, .ninl_aff = r.ninl_aff,
+            .H = self.H, .ninl = if (pos_kept) r.pos_inl else r.ninl_aff, .n_corr = r.pooled, .ninl_aff = r.ninl_aff,
             .pos_n = r.pos_n, .pos_inl = r.pos_inl, .has_rot = @intFromBool(r.rot_deg != null), .rot_deg = r.rot_deg orelse 0,
+            .pos_kept = @intFromBool(pos_kept),
         };
     }
 
@@ -577,6 +638,7 @@ pub const Engine = struct {
     pub fn match(self: *Engine) !MatchResult {
         try self.needImages();
         if (self.kp_n[0] == 0 or self.kp_n[1] == 0) return error.DetectFirst;
+        self.gls.limits = self.fitLimits();
         if (self.set.detector == .pos_gift) return self.matchPosGift();
         if (self.pg_det != null) return error.DetectFirst;
         self.gls.applySettings(self.glsSettings());
@@ -594,6 +656,7 @@ pub const Engine = struct {
         self.H = r.H;
         self.matched = true;
         self.events.log("match {s} {s}  corr {d}  inliers {d}", .{ @tagName(s.match_method), if (s.per_octave) "per-octave" else "global", self.gls.corr_count, r.ninl });
+        self.warnFit();
         return .{ .H = r.H, .ninl = r.ninl, .n_corr = self.gls.corr_count };
     }
 

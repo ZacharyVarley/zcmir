@@ -182,7 +182,8 @@ plt.tight_layout()
 # ## Matches and the fit
 #
 # Nearest neighbours between descriptors, a robust affine fit over all scales, then POS guided
-# re-matching at full resolution and a final homography.
+# re-matching at full resolution and its homography. The fit with the higher score is the result
+# (`pos_kept` says which).
 
 # %%
 mt = reg.match()

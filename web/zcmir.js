@@ -15,6 +15,9 @@ const LIMIT_KEYS = ["maxStorageBufferBindingSize", "maxBufferSize", "maxComputeW
 const utf8 = new TextDecoder();
 const newStats = () => ({ dispatches: 0, submits: 0, reads: 0, waits: 0, waitMs: 0, compileWaitMs: 0, pipelines: 0, pipelineMs: 0 });
 const utf8enc = new TextEncoder();
+// match.zig Verdict, in order (null: it passes)
+const FIT_VERDICTS = [null, "not a finite pose", "its horizon crosses the moving image (the image folds)", "it mirrors the image",
+  "its scale is outside the scale limits", "it stretches the image beyond the stretch limit", "its perspective is beyond the perspective limit"];
 
 // ── pipeline warm-up across page loads ──
 // Browsers compile a WGSL pipeline the first time a page asks for it, which costs 20–1000 ms
@@ -526,17 +529,18 @@ export class Zcmir {
 
   /**
    * Match and fit; the fit becomes the engine's pose. { H, inliers, correspondences } and for
-   * POS-GIFT { affineInliers, posN, posInliers, rotation (degrees, rotation search) }.
+   * POS-GIFT { affineInliers, posN, posInliers, rotation (degrees, rotation search), posKept
+   * (H is POS's fit; false: the pooled affine fit scored higher and stays) }.
    */
   match() {
     return this._serial(() => this._frame(async (f) => {
-      const p = f.alloc(104);
+      const p = f.alloc(112);
       this._check(await this.x.zc_match(this.e, p), "match");
-      const v = new DataView(this.mem, p, 104);
+      const v = new DataView(this.mem, p, 112);
       return {
         H: Array.from({ length: 9 }, (_, i) => v.getFloat64(i * 8, true)), inliers: v.getUint32(72, true), correspondences: v.getUint32(76, true),
         affineInliers: v.getUint32(80, true), posN: v.getUint32(84, true), posInliers: v.getUint32(88, true),
-        rotation: v.getUint32(92, true) ? v.getFloat64(96, true) : null,
+        rotation: v.getUint32(92, true) ? v.getFloat64(96, true) : null, posKept: !!v.getUint32(104, true),
       };
     }));
   }
@@ -657,6 +661,17 @@ export class Zcmir {
       const n = await this.x.zc_keypoint_frames(this.e, side, p, cap);
       if (n < 0) this._check(n, "keypoint_frames");
       return new Float32Array(this.mem, p, 2 * Math.min(n, cap)).slice();
+    }));
+  }
+
+  /** The sanity check of a pose fitted to matches (the settings' pose limits on the moving image):
+   *  null when it passes, else why it does not. */
+  fitCheck(H) {
+    return this._serial(() => this._frame(async (f) => {
+      const p = f.alloc(72);
+      new Float64Array(this.mem, p, 9).set(H);
+      const v = await this.x.zc_fit_check(this.e, p);
+      return v < FIT_VERDICTS.length ? FIT_VERDICTS[v] : "it fails the sanity check";
     }));
   }
 

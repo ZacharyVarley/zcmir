@@ -36,7 +36,7 @@ __all__ = [
     "Overlay", "TileHeat", "__version__",
 ]
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 _lib = None
 _wgpu = None
@@ -150,6 +150,12 @@ class Detection:
     levels_fixed: int
 
 
+# match.zig Verdict, in order (None: it passes)
+_FIT_VERDICTS = (None, "not a finite pose", "its horizon crosses the moving image (the image folds)", "it mirrors the image",
+                 "its scale is outside the scale limits", "it stretches the image beyond the stretch limit",
+                 "its perspective is beyond the perspective limit", "it fails the sanity check")
+
+
 @dataclass
 class Match:
     H: np.ndarray
@@ -159,6 +165,8 @@ class Match:
     pos_candidates: int = 0
     pos_inliers: int = 0
     rotation_deg: float | None = None
+    #: POS-GIFT: H is POS's fit (False: the pooled affine fit scored higher and stays)
+    pos_kept: bool = False
 
 
 @dataclass
@@ -418,6 +426,13 @@ class Registrar:
     def _Hp(self, H):
         return _mat(self.pose if H is None else H)
 
+    def fit_check(self, H=None):
+        """The sanity check of a pose fitted to matches, on the moving image: None when H passes,
+        else why it does not (its horizon crosses the image, it mirrors it, or it is outside the
+        settings scale_lo, scale_hi, max_aniso, max_persp)."""
+        a, p = self._Hp(H)
+        return _FIT_VERDICTS[min(self._lib.zc_fit_check(self._e, p), len(_FIT_VERDICTS) - 1)]
+
     # ── scores ──
     def score(self, H=None):
         a, p = self._Hp(H)
@@ -504,7 +519,7 @@ class Registrar:
         """Match and fit; the fit becomes the pose."""
         r = _native.MatchResult()
         self._check(self._lib.zc_match(self._e, ctypes.byref(r)), "match")
-        return Match(_H(r.H), r.ninl, r.n_corr, r.ninl_aff, r.pos_n, r.pos_inl, r.rot_deg if r.has_rot else None)
+        return Match(_H(r.H), r.ninl, r.n_corr, r.ninl_aff, r.pos_n, r.pos_inl, r.rot_deg if r.has_rot else None, bool(r.pos_kept))
 
     def keypoints(self, side):
         """Keypoints of side 0 (moving) or 1 (fixed): (n, 4) x, y (1-based), score, scale."""

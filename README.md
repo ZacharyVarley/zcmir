@@ -22,7 +22,7 @@ Open a moving and a fixed image (or drop both on the window), or pick one of the
 | Step | What it does |
 |---|---|
 | **Detect** | POS-GIFT keypoints [[7]](#references), modified (see [below](#pos-gift-in-zcmir)), or GLS-MIFT as a faster alternative |
-| **Match** | nearest descriptors, a robust fit (FSC / PROSAC / MAGSAC++), POS-guided re-matching |
+| **Match** | nearest descriptors, a robust fit of your choice (FSC / PROSAC / MAGSAC++) at your inlier distance, optional POS-guided re-matching; every fit is held to pose limits (no folding, mirroring, or extreme scale, stretch or perspective) |
 | **Refine** | Gauss–Newton ascent of the similarity over an affine or homography, optionally with a cubic B-spline under a thin-plate bending penalty, entirely on the GPU |
 | **Brute force** | optional: a sweep over rotation (the full circle, ± a half-range, or a from–to range) × scale × translation, optionally × shear × stretch, or a cloud of seeds around the pose |
 
@@ -49,7 +49,7 @@ POS-GIFT [[7]](#references) gives good matches across a huge variety of multimod
 | Descriptor sharpness | per-pixel range-normalized channels | the same, raised to a power (1.5, `pg_desc_pow`) and normalized per sampled point |
 | Patch radius (P1) | 16 | 10 |
 | Matching | one pooled match and FSC over every scale pair | consensus per scale pair, then one fit |
-| Final model | homography | the model you choose (homography by default), fit to the POS inliers |
+| Final model | homography | the model you choose (homography by default): the POS fit or the pooled fit, whichever scores higher |
 
 I chose these changes on EBSD ↔ BSE sections and rotated cross-modal pairs, where they reduced gross failures. Per-keypoint orientation is reliable within one modality but often wrong across modalities, hence the global rotation search. `zcmir.register(moving, fixed, pg_released=True)` reproduces the authors' behaviour, and the app's Detect card has switches for the rotation search and the keypoint map.
 

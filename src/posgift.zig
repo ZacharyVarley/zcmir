@@ -70,7 +70,13 @@ pub const Settings = struct {
     pos_affine: bool = false,
     n_trials: u32 = 100000,
     fsc_cover: bool = false,
+    /// inlier distance of the per-pair and the pooled fits (pixels)
     inlier_px: f64 = 10,
+    /// the pooled fit: its robust method and model (GLS-MIFT's fitCorr)
+    fit: gls_mod.MatchOptions = .{ .homography = false },
+    /// POS: inlier distance of its homography RANSAC, then of the correspondences it keeps
+    pos_search_px: f64 = 10,
+    pos_px: f64 = 3,
     seed: u32 = 12345,
 
     /// POS_GIFT_RELEASED: the authors' released MATLAB (POS_GIFT.p with MatchDemo's settings).
@@ -754,16 +760,12 @@ pub const PosGift = struct {
             self.mrun("match_nnq", (nq + 63) / 64, rows, q, &.{ e.kps.at(7), A.desq.at(20), B.desq.at(21), A.dsc.at(22), B.dsc.at(31), e.nn_part.at(29) });
             self.mrun(if (st.match == .matlab) "match_nnq_pick_ratio" else "match_nnq_pick", (nq + 63) / 64, 1, q, &.{ e.kps.at(7), A.des.at(8), B.des.at(13), e.match_j.at(14), e.nn_part.at(29) });
             if (st.match == .octave) {
-                // GLS-MIFT's per-pair model: affine FSC at 10 px, keep that pair's correspondences within it.
-                const user2 = e.p.inlier2;
-                e.p.inlier2 = 100;
+                // GLS-MIFT's per-pair model: affine FSC, keep that pair's correspondences within it.
                 e.p.seed = seed0 +% pair *% 10007;
                 pair += 1;
                 e.fscTrials(nq, n_trials);
                 e.fscReduce();
-                e.p.inlier2 = @max(user2, 100);
                 e.run("keep_corr", (nq + 63) / 64, 1, &.{ e.P(), e.kps.at(7), e.counters.at(9), e.kps_b.at(12), e.match_j.at(14), e.affine.at(16), e.corr.at(28) });
-                e.p.inlier2 = user2;
                 continue;
             }
             var q2 = e.p;
@@ -777,11 +779,11 @@ pub const PosGift = struct {
 
     const Fit = struct { pooled: u32, ninl_aff: u32, Haff: lie.Mat3 };
 
-    /// One global affine FSC over the pooled correspondences of matchPooled.
+    /// One global fit (settings fit: Lo-FSC affine, PROSAC or MAGSAC++) over the pooled correspondences of matchPooled.
     fn fitPooled(self: *PosGift, dl: *const Det, dr: *const Det, n_trials: u32) !Fit {
         const e = self.gls;
         e.p.n_trials = n_trials;
-        const ninl = try e.fitCorr(dl.n, dr.n, .{ .method = .lofsc, .homography = false }, n_trials);
+        const ninl = try e.fitCorr(dl.n, dr.n, self.set.fit, n_trials);
         return .{ .pooled = e.corr_count, .ninl_aff = ninl, .Haff = try e.readH() };
     }
 
@@ -981,7 +983,7 @@ pub const PosGift = struct {
     }
 
     /// POS: re-describe full-resolution keypoints with P1 = pos_p1 at the affine's rotation / scale
-    /// and re-match near H·p; then a perspective FSC, inliers within 3 px unique on both sides, and
+    /// and re-match near H·p; then a perspective FSC, inliers within pos_px unique on both sides, and
     /// the final least-squares model. Sets out.H (mapped back by `back` when given).
     fn pos(self: *PosGift, dl: *const Det, dr: *const Det, H: lie.Mat3, L: Image, R: Image, side2: SideId, out: *MatchOut, back_m: ?lie.Mat3) !void {
         const g = self.g;
@@ -1111,10 +1113,10 @@ pub const PosGift = struct {
         const m = px.items.len;
         out.pos_n = @intCast(m);
         if (m < 4) return;
-        // FSC(…, 'perspective', 10), refit on its inliers; then inliers within 3 px, unique on both sides.
+        // FSC(…, 'perspective', pos_search_px), refit on its inliers; then inliers within pos_px, unique on both sides.
         const mask = try gpa.alloc(u8, m);
         defer gpa.free(mask);
-        _ = try ransacHomography(gpa, px.items, py.items, qx.items, qy.items, 10, st.n_trials, 1, mask);
+        _ = try ransacHomography(gpa, px.items, py.items, qx.items, qy.items, st.pos_search_px, st.n_trials, 1, mask);
         var s10: std.ArrayList([2]f64) = .empty;
         defer s10.deinit(gpa);
         var d10: std.ArrayList([2]f64) = .empty;
@@ -1139,7 +1141,7 @@ pub const PosGift = struct {
             const z = Hh[6] * x + Hh[7] * y + Hh[8];
             const ex = (Hh[0] * x + Hh[1] * y + Hh[2]) / z - qx.items[i];
             const ey = (Hh[3] * x + Hh[4] * y + Hh[5]) / z - qy.items[i];
-            if (ex * ex + ey * ey >= 9) continue;
+            if (ex * ex + ey * ey >= st.pos_px * st.pos_px) continue;
             // `${x},${y}` keys: +0 and −0 print alike
             const k1s: [2]u64 = .{ @bitCast(x + 0.0), @bitCast(y + 0.0) };
             const k2s: [2]u64 = .{ @bitCast(qx.items[i] + 0.0), @bitCast(qy.items[i] + 0.0) };

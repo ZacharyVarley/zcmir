@@ -23,7 +23,6 @@ pub const KP_RUNNING: u32 = 0xffffffff;
 pub const LEVEL_REC = 8;
 pub const MAX_LEVELS = 64;
 const COUNTERS_BYTES = (LEVEL_REC + 4 * MAX_LEVELS) * 4;
-const SELECT_PX: f64 = 10;
 const CELL_G: u32 = 90; // ceil(sqrt(8000)): cell buffers for up to 8000 points per level
 
 pub const Params = extern struct {
@@ -140,6 +139,8 @@ pub const Gls = struct {
     cell_best: Buf,
     cell_pix: Buf,
     cell_kp: Buf,
+    /// what a fitted pose may do to the moving image (the engine sets it before a match)
+    limits: ?match.Limits = null,
     ori2: Buf,
     /// per keypoint slot of kps / kps_b: the tangential sector (of N_TAN) its descriptor starts at
     kdir: Buf,
@@ -802,14 +803,9 @@ pub const Gls = struct {
             pair += 1;
             self.matchNN(false);
             if (mutual) self.mutualSlice();
-            const user2 = self.p.inlier2;
-            const select2: f32 = @floatCast(SELECT_PX * SELECT_PX);
-            self.p.inlier2 = select2;
             self.fscTrials(a.count, self.p.n_trials);
             self.fscReduce();
-            self.p.inlier2 = @max(user2, select2);
             self.run("keep_corr", (a.count + 63) / 64, 1, &.{ self.P(), self.kps.at(7), self.counters.at(9), self.kps_b.at(12), self.match_j.at(14), self.affine.at(16), self.corr.at(28) });
-            self.p.inlier2 = user2;
         };
         self.p.seed = seed0;
         self.p.q_offset = 0;
@@ -952,16 +948,13 @@ pub const Gls = struct {
             self.p.q_offset = 0;
             self.p.db_offset = 0;
             self.p.n_trials = n_trials;
-            const user2 = self.p.inlier2;
-            self.p.inlier2 = @floatCast(SELECT_PX * SELECT_PX);
             self.run("zero_pack", 1, 1, &.{self.counters.at(9)});
             self.run("pack_corr", (@as(u32, @intCast(m)) + 63) / 64, 1, &.{ self.P(), self.kps.at(7), self.counters.at(9), self.kps_b.at(12), self.corr.at(28), self.fsc_xy.at(30) });
             self.run("fsc_hyps_corr", (n_trials + 63) / 64, 1, &.{ self.P(), self.kps.at(7), self.counters.at(9), self.kps_b.at(12), self.trials.at(15), self.corr.at(28), self.fsc_list.at(33) });
             self.countTrials(n_trials);
             self.fscReduce();
-            self.p.inlier2 = user2;
             H = try self.readH();
-            const fit2 = @max(@as(f64, user2), SELECT_PX * SELECT_PX);
+            const fit2: f64 = self.p.inlier2;
             var ip: std.ArrayList([2]f64) = .empty;
             defer ip.deinit(gpa);
             var iq: std.ArrayList([2]f64) = .empty;
@@ -975,7 +968,7 @@ pub const Gls = struct {
             const fit = try match.fitRobust(gpa, px, py, qx, qy, null, .{
                 .method = if (opt.method == .magsac) .magsac else .prosac, .homography = opt.homography,
                 .inlier_px = @sqrt(@as(f64, self.p.inlier2)), .n_trials = @min(n_trials, 8192), .seed = self.p.seed,
-                .scale_lo = self.p.scale_lo, .scale_hi = self.p.scale_hi,
+                .scale_lo = self.p.scale_lo, .scale_hi = self.p.scale_hi, .limits = self.limits,
             });
             H = fit.H;
         }
@@ -1084,7 +1077,7 @@ pub const Gls = struct {
         const fit = try match.fitRobust(gpa, cols[0].items, cols[1].items, cols[2].items, cols[3].items, cols[4].items, .{
             .method = if (opt.method == .magsac) .magsac else .prosac, .homography = opt.homography,
             .inlier_px = @sqrt(@as(f64, self.p.inlier2)), .n_trials = @min(n_trials, 8192), .seed = self.p.seed,
-            .scale_lo = self.p.scale_lo, .scale_hi = self.p.scale_hi,
+            .scale_lo = self.p.scale_lo, .scale_hi = self.p.scale_hi, .limits = self.limits,
         });
         self.writeH(fit.H);
         return .{ .H = fit.H, .ninl = fit.ninl };
@@ -1122,12 +1115,9 @@ pub const Gls = struct {
         } else if (opt.method != .lofsc) {
             ninl = (try self.fitMatchesJs(n1, n2, opt, n_trials)).ninl;
         } else if (n1 >= 3 and n2 >= 3) {
-            const user2 = self.p.inlier2;
-            self.p.inlier2 = @floatCast(SELECT_PX * SELECT_PX);
             self.fscTrials(n1, n_trials);
             self.fscReduce();
-            self.p.inlier2 = user2;
-            ninl = try self.refineAffine(n1, @sqrt(@max(@as(f64, user2), 1e-8)));
+            ninl = try self.refineAffine(n1, @sqrt(@max(@as(f64, self.p.inlier2), 1e-8)));
         } else self.writeH(lie.identity);
         return .{ .H = try self.readH(), .ninl = ninl };
     }

@@ -13,7 +13,7 @@ import { detColor, ffdOverlay } from "./ffdview.js";
 // Registration runs in the zcmir engine (Zig + WGSL, zcmir/zcmir.wasm); this page is its UI.
 // Detection and matching defaults (src/settings.zig, src/gls.zig).
 const N_TRIALS = 100000, MAX_TRIALS = 100000;
-const N_OCTAVES = 3, MAX_POINTS = 2000, MIN_CONTRAST = 0.01, RADIUS = 36, TAU = 0.8, INLIER_PX = 5;
+const N_OCTAVES = 3, MAX_POINTS = 2000, MIN_CONTRAST = 0.01, RADIUS = 36, TAU = 0.8, INLIER_PX = 10;
 // POS-GIFT's exposed settings and their defaults (src/posgift.zig Settings).
 const POS_GIFT_DEFAULTS = {
   n_octaves: 3, max_points: 5000, min_contrast: 0.01, p1: 10, desc_pow: 1.5, n_orient: 6, n_rings: 3, n_scales: 4,
@@ -203,7 +203,7 @@ function syncSummaries() {
   set("sum-det", pos ? `POS-GIFT · ${on("pg-search") ? "any rotation" : "upright"}` : `GLS-MIFT · ${val("d-n_octaves") || ""} octaves`);
   const px = val("d-inlier_px");
   const method = { lofsc: "Lo-FSC", prosac: "PROSAC", magsac: "MAGSAC++" }[val("match-method")] || "";
-  set("sum-mat", `${pos ? "FSC + POS" : method}${px ? ` · ${px} px` : ""}`);
+  set("sum-mat", `${method}${pos && on("pg-pos") ? " + POS" : ""}${px ? ` · ${px} px` : ""}`);
   const step = /^E4/.test(val("metric") || "") ? "line search" : "Gauss–Newton";
   const metric = val("metric") || "SMI";
   set("sum-pose", `${metric}${metric !== "NCC" && on("sym") ? " · sym" : ""} · ${step}`);
@@ -269,9 +269,11 @@ const DESCRIBE = [
   ["nt", 0, 0, 5, 0.001, "Feature-map soft threshold. Ignored while auto threshold is on.", "threshold"],
 ];
 const MATCH = [
-  ["inlier_px", INLIER_PX, 0.5, 80, 0.5, "How far a correspondence may sit from the model and still count. The model is chosen at 10 px; a smaller radius counts a tighter subset of the same model.", "inlier px"],
+  ["inlier_px", INLIER_PX, 0.5, 80, 0.5, "How far a match may sit from the robust fit's model and still be its inlier. The fit is chosen and its matches are kept at this distance; the inliers drawn are the matches within it of the matching fit.", "inlier px"],
   ["scale_lo", 0.2, 0.05, 2, 0.05, "Smallest area scale kept. Scale is the square root of the affine area change; 1 preserves area.", "scale min"],
   ["scale_hi", 5, 1, 30, 0.1, "Largest area scale kept.", "scale max"],
+  ["max_aniso", 5, 1, 20, 0.5, "Pose limit: the most a fitted pose may stretch the moving image (the ratio of its two local scales at the image center). A fit beyond it is set aside.", "max stretch"],
+  ["max_persp", 3, 1, 20, 0.5, "Pose limit: the most perspective a fitted pose may have (the ratio of its local scale between the moving image's corners). A fit whose horizon crosses the image, or that mirrors it, is always set aside.", "max perspective"],
   ["n_trials", N_TRIALS, 256, MAX_TRIALS, 256, "Random trials for Lo-FSC / PROSAC / MAGSAC++", "trials"],
   ["seed", 12345, 1, 1e9, 1, "RNG seed for matching", "seed"],
 ];
@@ -289,6 +291,12 @@ const PG_DETECT = [
   ["pg_max_points", POS_GIFT_DEFAULTS.max_points, 64, 16000, 64, "Keypoints per pyramid level (the strongest in each grid cell)", "max pts", "max_points"],
   ["pg_min_contrast", POS_GIFT_DEFAULTS.min_contrast, 0.001, 0.2, 0.001, "FAST threshold on the normalized phase congruency", "FAST", "min_contrast"],
   ["pg_p1", POS_GIFT_DEFAULTS.p1, 4, 32, 1, "Descriptor ring radii P1, 2·P1, 4·P1, in pixels of each pyramid level", "P1", "p1"],
+];
+// POS-GIFT's matching (the Match card): [id, default, min, max, step, tip, label]
+const PG_MATCH = [
+  ["pg_ratio", 0.6, 0.3, 1, 0.05, "Nearest-neighbour ratio test: a match is kept when its descriptor distance is at most this fraction of the second best's. 1 keeps every nearest neighbour.", "ratio test"],
+  ["pg_pos_search_px", 10, 1, 100, 1, "POS re-matching: inlier distance of its homography search over the re-matched points.", "POS search px"],
+  ["pg_pos_px", 3, 0.5, 50, 0.5, "POS re-matching: the re-matched points within this distance of that homography (one per point on each side) give POS's fit.", "POS keep px"],
 ];
 const PG_ADV = [
   ["pg_desc_pow", POS_GIFT_DEFAULTS.desc_pow, 0.5, 4, 0.25, "Sharpening: each sampled point's orientation channels are raised to this power before normalization, emphasizing its dominant orientations (1 = the plain descriptor)", "sharpen", "desc_pow"],
@@ -938,7 +946,7 @@ const state = {
   maps: { shift: null, rs: null }, mapViews: { shift: null, rs: null }, mapDraw: { shift: null, rs: null },
   mapMark: null, preview: null,
   undo: [], trail: [], trailSel: -1, _restoring: false,
-  kpsL: null, kpsR: null, matchJ: null, matchRev: null, inlier: null, matchScore: null, kpSel: null, kpHover: null,
+  kpsL: null, kpsR: null, matchJ: null, matchRev: null, matchH: null, inlier: null, matchScore: null, kpSel: null, kpHover: null,
   n1: 0, n2: 0, poseClimbed: false,
   regView: { z: 1, x: 0, y: 0 },
   trailView: { i0: 0, i1: null },
@@ -1413,7 +1421,7 @@ async function main() {
       ffd: !!$("ffd")?.checked, ffd_grid: Math.max(2, Math.min(FFD_MAX, int("ffd-g", 4))), ffd_source: $("ffd-frame")?.value === "source",
       ffd_stiffness: Math.max(0, Math.min(1, num("ffd-stiff", 0.15))),
       hop: !!$("hop")?.checked, hop_fm: !!$("hop-fm")?.checked,
-      g_a0: num("g-a0", 0.08), g_decay: num("g-decay", 0.5), g_steps: int("g-steps", 7), g_iters: Math.max(1, int("g-iters", 20)),
+      g_a0: num("g-a0", 0.08), g_decay: num("g-decay", 0.5), g_steps: int("g-steps", 7), g_iters: Math.max(1, int("g-iters", 100)),
       clahe: !!$("clahe")?.checked, clahe_grid: 4, clahe_bins: 64,
       band: !!$("band")?.checked, bp_fine: num("bp-fine", 1) || 1, bp_coarse: num("bp-coarse", 6) || 6, invert: !!$("invert")?.checked,
       half: !!$("half")?.checked, fft_sizes: $("fft-compact")?.checked ? "compact" : "ladder",
@@ -1422,6 +1430,9 @@ async function main() {
       tau: num("d-tau", TAU), radius: num("d-radius", RADIUS), nt: num("d-nt", 0),
       auto_nt: $("opt-nt") ? !!$("opt-nt").checked : true, second_ori: $("opt-second") ? !!$("opt-second").checked : true,
       inlier_px: num("d-inlier_px", INLIER_PX), scale_lo: num("d-scale_lo", 0.2), scale_hi: num("d-scale_hi", 5),
+      max_aniso: num("d-max_aniso", 5), max_persp: num("d-max_persp", 3),
+      pg_ratio: num("d-pg_ratio", 0.6), pg_pos: $("pg-pos")?.checked !== false,
+      pg_pos_search_px: num("d-pg_pos_search_px", 10), pg_pos_px: num("d-pg_pos_px", 3),
       n_trials: int("d-n_trials", N_TRIALS) || N_TRIALS, seed: int("d-seed", 12345),
       n_sigma: int("d-n_sigma", 4), n_angle: int("d-n_angle", 6), n_r: int("d-n_r", 3),
       match_method: $("match-method")?.value || "lofsc", per_octave: $("opt-octave") ? !!$("opt-octave").checked : true, mutual: !!$("mutual")?.checked,
@@ -1670,6 +1681,7 @@ async function main() {
       box.insertAdjacentHTML("beforeend", `<div><label title="${tip}">${name || k}</label><input type="number" id="d-${k}" value="${v}" min="${lo}" max="${hi}" step="${st}" title="${tip}"></div>`);
     }
   };
+  fieldsInto($("pg-match"), PG_MATCH);
   fieldsInto($("pg-detect"), PG_DETECT);
   fieldsInto($("pg-adv"), PG_ADV);
   fieldsInto($("gls-adv"), GLS_ADV);
@@ -2644,7 +2656,7 @@ async function main() {
     }
     $("sum-match").textContent = String(nMatch);
     $("sum-inl").textContent = `${nInl} inliers`;
-    $("sum-inl").parentElement.title = `${nInl} inliers of ${nMatch} matches`;
+    $("sum-inl").parentElement.title = `${nInl} of ${nMatch} matches lie within ${+$("d-inlier_px").value || INLIER_PX} px of the matching fit (the pose before Refine)`;
     if (H) {
       if ($("h-summary")) $("h-summary").textContent = poseLine(H);
     }
@@ -2671,9 +2683,11 @@ async function main() {
     return rev;
   }
 
+  /** Inliers are the matches within the tolerance of the matching fit (state.matchH), whatever
+   *  the pose has become since. */
   function refreshInliers() {
     if (!state.kpsL || !state.matchJ) return;
-    state.inlier = kpInliers(state.kpsL, state.kpsR, state.matchJ, currentH(), +$("d-inlier_px").value || INLIER_PX);
+    state.inlier = kpInliers(state.kpsL, state.kpsR, state.matchJ, state.matchH || currentH(), +$("d-inlier_px").value || INLIER_PX);
     writeMatchStats(currentH());
     showImages();
   }
@@ -2710,6 +2724,7 @@ async function main() {
     state.matchJRaw = await zc.matches();
     state.matchJ = Uint32Array.from(state.matchJRaw);
     state.matchRev = applyMutual(state.matchJ, n1, n2);
+    state.matchH = Array.from(H);
     state.inlier = kpInliers(state.kpsL, state.kpsR, state.matchJ, H, +$("d-inlier_px").value || INLIER_PX);
     state.matchScore = await zc.matchScores();
     state._scoreRange = matchScoreRange();
@@ -2876,7 +2891,8 @@ async function main() {
     [state.kpsL, state.kpsR] = [state.kpsR, state.kpsL];
     [state.levelsL, state.levelsR] = [state.levelsR, state.levelsL];
     [state.n1, state.n2] = [state.n2, state.n1];
-    // Invert the whole pose (tangent step included) before the inlier recount uses it.
+    // Invert the whole pose (tangent step included) and the matching fit the inlier recount uses.
+    if (state.matchH) state.matchH = inv3(state.matchH);
     state.H0 = inv3(currentH());
     zeroTan();
     if (state.matchJ) {
@@ -3017,7 +3033,9 @@ async function main() {
     setBusy(false);
   }
   $("btn-rematch").onclick = runMatch;
-  $("btn-refit").onclick = () => {
+  // The least-squares model through the matching step's inliers. The inliers stay those of the
+  // matching fit (state.matchH), so pressing again fits the same points.
+  $("btn-refit").onclick = async () => {
     if (!state.kpsL || !state.matchJ || !state.inlier) return;
     const p = [], q = [];
     for (let i = 0; i < state.kpsL.length; i++) {
@@ -3028,10 +3046,19 @@ async function main() {
       q.push([state.kpsR[j][0], state.kpsR[j][1]]);
     }
     if (p.length < 3) { log("need ≥3 inliers to refit"); return; }
+    await zcSync();
+    let H = (state.group === "affine" || p.length < 4) ? HAffineFromPts(p, q) : HHomographyFromPts(p, q);
+    let why = await zc.fitCheck(H);
+    if (why && state.group !== "affine") {
+      log(`refit: the homography through ${p.length} inliers is set aside (${why}); trying the affine`);
+      H = HAffineFromPts(p, q);
+      why = await zc.fitCheck(H);
+    }
+    if (why) { log(`refit from ${p.length} inliers not applied: ${why}`); return; }
     pushUndo();
-    state.H0 = (state.group === "affine" || p.length < 4) ? HAffineFromPts(p, q) : HHomographyFromPts(p, q);
+    state.H0 = H;
     zeroTan();
-    refreshInliers();
+    writeMatchStats(currentH());
     applyWarp(true);
     state.poseClimbed = false;
     markNext();
@@ -3063,10 +3090,10 @@ async function main() {
     const m = $("match-method")?.value;
     const el = $("match-hint");
     if (!el) return;
-    if (posGiftOn()) el.textContent = "POS-GIFT: nearest neighbours per level pair, affine FSC, then POS re-matching near the affine. The inlier radius recolors the overlay.";
-    else if (m === "prosac") el.textContent = "PROSAC: top-ranked 4-point H, orientation + cheirality predicates, LO-DLT.";
-    else if (m === "magsac") el.textContent = "MAGSAC++: σ-consensus weights instead of a hard inlier cut, then weighted DLT.";
-    else el.textContent = "Lo-FSC: GPU 3-point affine + scale gate. inlier radius recolors live.";
+    const fit = m === "prosac" ? "PROSAC: samples ranked by descriptor score, orientation-preserving, least-squares refits."
+      : m === "magsac" ? "MAGSAC++: soft inlier weights instead of a hard cut, then a weighted least-squares fit."
+        : "Lo-FSC: a 3-point affine on the GPU.";
+    el.textContent = `${fit} Every fit is held to the pose limits.${posGiftOn() ? " POS-GIFT then re-matches near that fit (POS) and keeps the better-scoring of the two." : ""}`;
   }
   if ($("hop")) $("hop").onchange = syncOptimizeUi;
   if ($("match-method")) $("match-method").onchange = syncMatchHint;
@@ -3431,7 +3458,7 @@ async function main() {
   }
   function syncDetector() {
     const pos = posGiftOn();
-    for (const [id, show] of [["gls-opts", !pos], ["gls-match-opts", !pos], ["gls-match-opts2", !pos], ["pg-opts", pos]]) {
+    for (const [id, show] of [["gls-opts", !pos], ["mutual-lab", !pos], ["pg-match-opts", pos], ["pg-opts", pos]]) {
       if ($(id)) $(id).hidden = !show;
     }
     syncMatchHint();
