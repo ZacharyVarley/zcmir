@@ -549,6 +549,14 @@
                     <option title="Normalized cross-correlation (same modality only)">NCC</option>
                   </select>
                 </div>
+                <div class="span2">
+                  <label title="The features the SMI scores compare: the rank r of each pixel, r², the gradient magnitude |∇r| and a fourth. Laplacian: of r over 3 × 3 pixels (the sharpest score peaks). Three features: no fourth, for about 20% faster maps and brute force at a slightly lower peak. r³: the original set.">SMI features</label>
+                  <select id="smi-feat">
+                    <option value="laplacian" selected>r, r², |∇r|, Laplacian</option>
+                    <option value="three">r, r², |∇r| (three, faster)</option>
+                    <option value="cubic">r, r², |∇r|, r³ (original)</option>
+                  </select>
+                </div>
               </div>
               <label class="check" id="exact-lab" title="Off: one global 4×4 whitening per image, score n‖C‖². On: whiten each overlap by its own feature covariance, score n‖L_A⁻¹ C L_B⁻ᵀ‖² (about 1.8× the map cost of global whitening). Applies to the map, the pose score, and the climb."><input type="checkbox" id="exact" checked> exact whitening</label>
               <label class="check" title="Optimize the mean of the forward and inverse scores. The roto-scale map is then the mean of the map in the fixed frame and the same map computed in the moving frame, cell by cell."><input type="checkbox" id="sym" checked> symmetric <span class="note">forward + inverse</span></label>

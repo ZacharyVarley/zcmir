@@ -36,7 +36,7 @@ __all__ = [
     "Overlay", "TileHeat", "__version__",
 ]
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 _lib = None
 _wgpu = None
@@ -344,7 +344,8 @@ class Registrar:
     # ── inspection ──
     def features(self, side):
         """The SMI feature planes of side 0 (moving) or 1 (fixed), (4, h, w) float32: the
-        whitened rank r, r², r³ and the rank's gradient magnitude."""
+        whitened rank r, r², the rank's gradient magnitude and the fourth feature (settings
+        smi_features: the Laplacian of r, a zero plane with "three", or r³ with "cubic")."""
         w, h = self.image_size(side)
         out = np.empty((4, h, w), np.float32)
         self._check(self._lib.zc_features(self._e, side, _fp(out), out.size), "features")

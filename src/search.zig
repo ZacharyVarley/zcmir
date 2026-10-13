@@ -301,7 +301,7 @@ pub const Sweep = struct {
         const g = self.g;
         const gpa = g.gpa;
         const exact = o.mode == 1 or o.mode == 3;
-        const plan = self.smi.plans[@intFromBool(exact)];
+        const plan = self.smi.planFor(exact, o.mode < 2).*;
         const n_cplx = (plan.n_real + 1) / 2;
         const fx = self.img[fixed];
         const mv = self.img[moving];
@@ -422,6 +422,7 @@ pub const Sweep = struct {
                 .nx = nx, .ny = ny, .n_real = plan.n_real, .n_cplx = n_cplx, .n_out = plan.n_out, .n_corr = plan.n_corr,
                 .ox = @floatCast(ox), .oy = @floatCast(oy), .cell = @floatCast(cell), .mode = o.mode, .n_peak = o.n_peak,
                 .fx0 = fcx[0], .fy0 = fcy[0], .grid = grid,
+                ._p0 = plan.plane_mask, ._p1 = plan.corr_mask[0], ._p2 = plan.corr_mask[1],
             };
             // the fixed planes: its footprint at the plane origin
             var uf = base;
@@ -449,7 +450,7 @@ pub const Sweep = struct {
                 ub.win_y = ny - Fy + 1;
                 self.run("pack_sweep", gx, gy, b, ub, &.{ self.il[moving].at(5), self.poses.at(3), self.spec_a.at(4) });
                 bf.run(g, self.spec_a, false, b * n_cplx);
-                self.run1("cmul_sweep", gnn, b * plan.n_out, ub, &.{ self.spec_a.at(1), self.spec_b.at(2), self.smi.pairs[@intFromBool(exact)].at(3), self.work.at(4) });
+                self.run1("cmul_sweep", gnn, b * plan.n_out, ub, &.{ self.spec_a.at(1), self.spec_b.at(2), self.smi.pairs[plan.id].at(3), self.work.at(4) });
                 bf.run(g, self.work, true, b * plan.n_out);
                 self.run1("combine_sweep", gnn, b, ub, &.{ self.work.at(1), self.poses.at(3), self.ns.at(4) });
                 self.run("peaks_sweep", b, 1, 1, ub, &.{ self.ns.at(1), self.peaks.at(4) });

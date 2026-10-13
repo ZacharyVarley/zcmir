@@ -24,7 +24,7 @@ const Gpu = gpu_mod.Gpu;
 const Buf = gpu_mod.Buf;
 pub const Settings = settings_mod.Settings;
 
-pub const version = "0.1.3";
+pub const version = "0.1.4";
 
 /// Result of a shift map. Lags are in fixed-image pixels: translating the moving image by
 /// (−dx, −dy) after H moves it onto the peak (the browser app's "shift hop"), i.e. the corrected
@@ -235,6 +235,7 @@ pub const Engine = struct {
     fn syncSettings(self: *Engine) void {
         const s = &self.set;
         self.g.fft_sizes = s.fft_sizes;
+        self.smi.feat_mode = s.smi_features;
         self.pr.set = .{ .family = s.family(), .exact = s.exact, .edge = s.metric == .smi_edge, .symmetric = s.symmetric };
         const g = std.math.clamp(s.ffd_grid, 2, pose_mod.FFD_MAX);
         if (g != self.ffd.g) {
@@ -442,7 +443,7 @@ pub const Engine = struct {
     fn syncFeatures(self: *Engine) void {
         const normal = self.set.family() != .smi;
         var changed = false;
-        for (0..2) |s| if (self.sides[s].has and self.feats[s].normal != normal) {
+        for (0..2) |s| if (self.sides[s].has and (self.feats[s].normal != normal or (!normal and self.feats[s].mode != self.smi.feat_mode))) {
             self.smi.prepare(self.sides[s].work32, self.sides[s].w, self.sides[s].h, &self.feats[s], normal);
             changed = true;
         };

@@ -34,12 +34,12 @@ reg.set_images(moving, fixed)
 # %% [markdown]
 # ## Four features per pixel
 #
-# Each image becomes four planes: its rank r (histogram equalized intensity), r², r³ and the
-# gradient magnitude of r, whitened so the four are uncorrelated with unit variance.
+# Each image becomes four planes: its rank r (histogram equalized intensity), r², the gradient
+# magnitude of r and the Laplacian of r, whitened so the four are uncorrelated with unit variance.
 
 # %%
 A, B = reg.features(0), reg.features(1)
-names = ["r", "r²", "r³", "|∇r|"]
+names = ["r", "r²", "|∇r|", "∇²r"]
 fig, ax = plt.subplots(2, 4, figsize=(13, 6.5))
 for k in range(4):
     for row, F, side in [(0, A, "moving"), (1, B, "fixed")]:

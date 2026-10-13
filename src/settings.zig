@@ -14,6 +14,8 @@ pub const SearchMode = enum { sweep, cloud };
 pub const Settings = struct {
     // ── score ──
     metric: Metric = .smi,
+    /// the SMI score's fourth feature beside r, r², |∇r| (moments.zig SmiFeatures)
+    smi_features: mom.SmiFeatures = .laplacian,
     /// per-overlap exact whitening (else one global whitening)
     exact: bool = true,
     /// maps report the Pillai / Wilson–Hilferty z (exact SMI only)

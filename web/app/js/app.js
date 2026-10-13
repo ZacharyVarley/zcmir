@@ -1415,7 +1415,8 @@ async function main() {
   function appSettings() {
     const [rsLo, rsHi] = rsScaleBounds();
     const s = {
-      metric: METRIC_KEY[$("metric").value] || "smi", exact: !!$("exact")?.checked, calibrated: !!$("map-cal")?.checked,
+      metric: METRIC_KEY[$("metric").value] || "smi", smi_features: $("smi-feat")?.value || "laplacian",
+      exact: !!$("exact")?.checked, calibrated: !!$("map-cal")?.checked,
       symmetric: invOn(), group: state.group, map_res: int("map-res", 0), min_overlap: num("min-ov", 0.05),
       rs_smin: rsLo, rs_smax: rsHi,
       ffd: !!$("ffd")?.checked, ffd_grid: Math.max(2, Math.min(FFD_MAX, int("ffd-g", 4))), ffd_source: $("ffd-frame")?.value === "source",
@@ -3078,6 +3079,7 @@ async function main() {
   };
   $("metric").onchange = onScoreChange;
   if ($("exact")) $("exact").onchange = onScoreChange;
+  if ($("smi-feat")) $("smi-feat").onchange = onScoreChange;
   if ($("map-res")) $("map-res").onchange = () => { syncScore(); if (state.left && state.right) refreshMap(true); };
   if ($("map-cal")) $("map-cal").onchange = () => { syncScore(); if (state.left && state.right) refreshMap(true); };
   $("reg-mode").onchange = () => { armFlicker(); applyWarp(false); };

@@ -251,6 +251,15 @@ for det in ("pos_gift", "gls_mift"):
         e = corner_dist(m.H, H, lw, lh)
         check(f"match {det} / {method}", e < 8 and m.inliers > 20 and reg.fit_check(m.H) is None, f"{e:.2f} px from the registered pose, {m.inliers} inliers")
 reg.configure(detector="pos_gift", match_method="lofsc")
+# the SMI features: the fourth is a setting, and changing it rebuilds the features
+for mode in ("three", "cubic", "laplacian"):
+    reg.configure(smi_features=mode)
+    f4 = reg.features(0)[3]
+    reg.pose = H
+    c = reg.climb()
+    sm = reg.shift_map(c.H)
+    check(f"smi_features {mode}", corner_dist(c.H, H, lw, lh) < 1.0 and (np.abs(f4).max() == 0) == (mode == "three") and abs(sm.dx) < 2 and abs(sm.dy) < 2,
+          f"{corner_dist(c.H, H, lw, lh):.3f} px from the registered pose, map peak {sm.peak:.1f} at ({sm.dx:.1f}, {sm.dy:.1f})")
 reg.configure(search_mode="sweep")
 reg.pose = T @ H
 reg.search()

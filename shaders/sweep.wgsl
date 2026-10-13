@@ -81,6 +81,20 @@ fn tap(x: f32, y: f32, s0: ptr<function, vec4f>, s1: ptr<function, f32>) {
         + w01 * il[2u * i01 + 1u].x + w11 * il[2u * i11 + 1u].x;
 }
 
+// A plan without the fourth feature (three features) keeps the real planes in u.p0 and the
+// correlations in u.p1 (0–31), u.p2 (32–44), in order; u.p0 == 0: every plane and correlation.
+fn slot_plane(slot: u32) -> u32 {
+    if (u.p0 == 0u) { return slot; }
+    var seen = 0u;
+    for (var p = 0u; p < 15u; p++) {
+        if ((u.p0 & (1u << p)) != 0u) {
+            if (seen == slot) { return p; }
+            seen++;
+        }
+    }
+    return 0u;
+}
+
 fn real_plane(r: u32, s: array<f32, 5>) -> f32 {
     if (r == 0u) { return s[0]; }
     if (r < 5u) { return s[r]; }
@@ -128,8 +142,8 @@ fn pack_sweep(@builtin(global_invocation_id) gid: vec3u) {
         var re = 0.0;
         var im = 0.0;
         if (inside) {
-            re = real_plane(r0, s);
-            if (r0 + 1u < u.n_real) { im = real_plane(r0 + 1u, s); }
+            re = real_plane(slot_plane(r0), s);
+            if (r0 + 1u < u.n_real) { im = real_plane(slot_plane(r0 + 1u), s); }
         }
         let i = ((b * u.n_cplx + c) * nn + t) * 2u;
         out_a[i] = re;
@@ -184,7 +198,13 @@ fn cmul_sweep(@builtin(global_invocation_id) gid2: vec3u, @builtin(num_workgroup
 
 // Correlation plane o of candidate b at shift t, straight from the IFFT output:
 // pair output o >> 1 holds planes 2p (re) and 2p + 1 (im).
-fn corr_at(b: u32, o: u32, t: u32, nn: u32) -> f32 {
+fn corr_at(b: u32, o0: u32, t: u32, nn: u32) -> f32 {
+    var o = o0;
+    if (u.p0 != 0u) {
+        // its place among the correlations the plan keeps
+        if (o0 < 32u) { o = countOneBits(u.p1 & ((1u << o0) - 1u)); }
+        else { o = countOneBits(u.p1) + countOneBits(u.p2 & ((1u << (o0 - 32u)) - 1u)); }
+    }
     return in_a[((b * u.n_out + (o >> 1u)) * nn + t) * 2u + (o & 1u)];
 }
 
@@ -228,6 +248,7 @@ fn combine_sweep(@builtin(global_invocation_id) gid2: vec3u, @builtin(num_workgr
     let floor_n = max(f32(u.min_n), 0.08 * max(corr_at(b, 0u, zero_lag(b), nn), 0.0));
     if (n < floor_n) { out_a[o] = 0.0; return; }
     let den = max(n, 1e-8);
+    let nf = select(4u, 3u, u.p0 != 0u);
     // u.exact: 0 global, 1 exact SMI, 2 E4, 3 λmax (copula.wgsl, n × MI).
     if (u.exact >= 2u) {
         var mm: array<f32, 45>;
@@ -238,14 +259,14 @@ fn combine_sweep(@builtin(global_invocation_id) gid2: vec3u, @builtin(num_workgr
     }
     var ma: array<f32, 4>;
     var mb: array<f32, 4>;
-    for (var i = 0u; i < 4u; i++) {
+    for (var i = 0u; i < nf; i++) {
         ma[i] = corr_at(b, 1u + i, t, nn) / den;
         mb[i] = corr_at(b, 5u + i, t, nn) / den;
     }
     if (u.exact == 0u) {
         var s = 0.0;
-        for (var i = 0u; i < 4u; i++) {
-            for (var j = 0u; j < 4u; j++) {
+        for (var i = 0u; i < nf; i++) {
+            for (var j = 0u; j < nf; j++) {
                 let cij = clamp(corr_at(b, 9u + i * 4u + j, t, nn) / den - ma[i] * mb[j], -1.0, 1.0);
                 s = s + cij * cij;
             }
@@ -257,8 +278,8 @@ fn combine_sweep(@builtin(global_invocation_id) gid2: vec3u, @builtin(num_workgr
     var gb: array<f32, 16>;
     var tra = 0.0;
     var trb = 0.0;
-    for (var i = 0u; i < 4u; i++) {
-        for (var j = 0u; j < 4u; j++) {
+    for (var i = 0u; i < nf; i++) {
+        for (var j = 0u; j < nf; j++) {
             let k = tri_k(i, j);
             ga[i * 4u + j] = corr_at(b, 25u + k, t, nn) / den - ma[i] * ma[j];
             gb[i * 4u + j] = corr_at(b, 35u + k, t, nn) / den - mb[i] * mb[j];
@@ -266,23 +287,25 @@ fn combine_sweep(@builtin(global_invocation_id) gid2: vec3u, @builtin(num_workgr
         tra = tra + ga[i * 5u];
         trb = trb + gb[i * 5u];
     }
-    for (var i = 0u; i < 4u; i++) {
+    for (var i = 0u; i < nf; i++) {
         ga[i * 5u] = ga[i * 5u] + u.ridge * max(tra * 0.25, 1e-12);
         gb[i * 5u] = gb[i * 5u] + u.ridge * max(trb * 0.25, 1e-12);
     }
+    // (the unused rows of a three-feature score: the identity)
+    for (var i = nf; i < 4u; i++) { ga[i * 5u] = 1.0; gb[i * 5u] = 1.0; }
     if (!chol4(&ga) || !chol4(&gb)) { out_a[o] = 0.0; return; }
     var x: array<f32, 16>;
-    for (var j = 0u; j < 4u; j++) {
-        for (var i = 0u; i < 4u; i++) {
+    for (var j = 0u; j < nf; j++) {
+        for (var i = 0u; i < nf; i++) {
             var s = corr_at(b, 9u + i * 4u + j, t, nn) / den - ma[i] * mb[j];
             for (var k = 0u; k < i; k++) { s = s - ga[i * 4u + k] * x[k * 4u + j]; }
             x[i * 4u + j] = s / ga[i * 5u];
         }
     }
     var acc = 0.0;
-    for (var r = 0u; r < 4u; r++) {
+    for (var r = 0u; r < nf; r++) {
         var y: array<f32, 4>;
-        for (var i = 0u; i < 4u; i++) {
+        for (var i = 0u; i < nf; i++) {
             var s = x[r * 4u + i];
             for (var k = 0u; k < i; k++) { s = s - gb[i * 4u + k] * y[k]; }
             y[i] = s / gb[i * 5u];

@@ -70,13 +70,24 @@ comptime {
 }
 
 /// Real-plane correlations a map needs (smi.js corrPlan): 25 (global whitening) or 45 (exact).
+/// Real planes: 0 the weight, 1–4 the features, 5–14 their products (upper triangle).
+/// With three features (the fourth plane is zero) every plane and correlation of the fourth is
+/// left out: 16 or 28 correlations of 4 or 10 planes. The correlations keep their numbers
+/// (pairs[·][2]), so the score kernels read the same layout; the planes move up into slots.
 const CorrPlan = struct {
     n_real: u32,
     n_corr: u32,
     n_out: u32,
     pairs: [23 * 6]u32,
+    /// the real planes kept, by number (0: all), and the correlations kept (0: all)
+    plane_mask: u32 = 0,
+    corr_mask: [2]u32 = .{ 0, 0 },
+    /// features the score runs over, for the kernels (0: four)
+    nf: u32 = 0,
+    /// index into Smi.pairs
+    id: u8 = 0,
 
-    fn make(exact: bool) CorrPlan {
+    fn make(exact: bool, three: bool) CorrPlan {
         var list: [45][2]u32 = undefined;
         var len: usize = 0;
         list[len] = .{ 0, 0 };
@@ -103,23 +114,46 @@ const CorrPlan = struct {
                 len += 1;
             }
         }
-        var p: CorrPlan = .{ .n_real = if (exact) 15 else 5, .n_corr = @intCast(len), .n_out = @intCast((len + 1) / 2), .pairs = undefined };
-        for (0..p.n_out) |o| {
-            const o1 = 2 * o;
-            const o2 = o1 + 1;
-            p.pairs[o * 6 + 0] = list[o1][0];
-            p.pairs[o * 6 + 1] = list[o1][1];
-            p.pairs[o * 6 + 2] = @intCast(o1);
-            if (o2 < len) {
-                p.pairs[o * 6 + 3] = list[o2][0];
-                p.pairs[o * 6 + 4] = list[o2][1];
-                p.pairs[o * 6 + 5] = @intCast(o2);
-            } else {
-                p.pairs[o * 6 + 3] = 0;
-                p.pairs[o * 6 + 4] = 0;
-                p.pairs[o * 6 + 5] = 0xffffffff;
+        // planes of the fourth feature: 4, and the products (i, 3) = 8, 11, 13, 14
+        const n_planes: u32 = if (exact) 15 else 5;
+        var slot: [15]u32 = undefined;
+        var n_real: u32 = 0;
+        var plane_mask: u32 = 0;
+        for (0..n_planes) |pl| {
+            const fourth = pl == 4 or pl == 8 or pl == 11 or pl == 13 or pl == 14;
+            if (three and fourth) {
+                slot[pl] = 0xffffffff;
+                continue;
             }
+            slot[pl] = n_real;
+            n_real += 1;
+            plane_mask |= @as(u32, 1) << @intCast(pl);
         }
+        var p: CorrPlan = .{ .n_real = n_real, .n_corr = @intCast(len), .n_out = 0, .pairs = undefined, .id = @as(u8, @intFromBool(three)) * 2 + @intFromBool(exact) };
+        var kept: u32 = 0;
+        for (0..len) |c| {
+            const sa = slot[list[c][0]];
+            const sb = slot[list[c][1]];
+            if (sa == 0xffffffff or sb == 0xffffffff) continue;
+            const o = kept / 2;
+            const h: usize = (kept % 2) * 3;
+            p.pairs[o * 6 + h + 0] = sa;
+            p.pairs[o * 6 + h + 1] = sb;
+            p.pairs[o * 6 + h + 2] = @intCast(c);
+            p.corr_mask[c / 32] |= @as(u32, 1) << @intCast(c % 32);
+            kept += 1;
+        }
+        if (kept % 2 == 1) {
+            const o = kept / 2;
+            p.pairs[o * 6 + 3] = 0;
+            p.pairs[o * 6 + 4] = 0;
+            p.pairs[o * 6 + 5] = 0xffffffff;
+        }
+        p.n_out = (kept + 1) / 2;
+        if (three) {
+            p.plane_mask = plane_mask;
+            p.nf = 3;
+        } else p.corr_mask = .{ 0, 0 };
         return p;
     }
 };
@@ -130,7 +164,9 @@ pub const Features = struct {
     h: u32 = 0,
     /// normal-score features [z, z², z³, z⁴] (copula scores E4 / λmax) instead of whitened ranks
     normal: bool = false,
-    /// 4 whitened planes [r, r², r³, |∇r|]
+    /// the fourth feature these were made with (SMI features)
+    mode: mom.SmiFeatures = .laplacian,
+    /// 4 whitened planes [r, r², |∇r|, the fourth feature (zero with three)]
     feat: Buf = .{},
     /// Sobel magnitude of the rank (edge weight)
     mag: Buf = .{},
@@ -215,8 +251,11 @@ pub const RsPlan = struct {
 pub const Smi = struct {
     g: *Gpu,
     hw_max_n: u32,
-    plans: [2]CorrPlan,
-    pairs: [2]Buf,
+    /// [exact] with four features, then [2 + exact] with three
+    plans: [4]CorrPlan,
+    /// the fourth feature new SMI features are made with (settings.smi_features)
+    feat_mode: mom.SmiFeatures = .laplacian,
+    pairs: [4]Buf,
     /// parameters finished on the GPU: [0] mean, [1] 1.0, [2] spread
     prm: Buf,
     /// [0] the pair's feature correlation area (px²)
@@ -253,7 +292,7 @@ pub const Smi = struct {
         var s: Smi = .{
             .g = g,
             .hw_max_n = fft.maxFftN(g.lim.max_workgroup_storage),
-            .plans = .{ CorrPlan.make(false), CorrPlan.make(true) },
+            .plans = .{ CorrPlan.make(false, false), CorrPlan.make(true, false), CorrPlan.make(false, true), CorrPlan.make(true, true) },
             .pairs = undefined,
             .prm = g.storage(16 * 4),
             .pair_prm = g.storage(16),
@@ -265,7 +304,7 @@ pub const Smi = struct {
             .arg = g.storage(64 * 2 * 4),
             .res = g.storage(4 * 4),
         };
-        for (0..2) |k| {
+        for (0..4) |k| {
             const p = &s.plans[k];
             s.pairs[k] = g.storage(p.n_out * 6 * 4);
             g.writeSlice(s.pairs[k], 0, u32, p.pairs[0 .. p.n_out * 6]);
@@ -304,7 +343,7 @@ pub const Smi = struct {
         self.g.dispatch(self.pipe(entry), x, y, z, binds);
     }
 
-    /// Rank-equalize, build [r, r², r³, |∇r|], whiten them globally, and precompute the
+    /// Rank-equalize, build [r, r², |∇r|, the fourth feature], whiten them globally, and precompute the
     /// autocorrelation and the weight-1 stack. `gray`: w×h f32. Recorded, not submitted.
     pub fn prepare(self: *Smi, gray: Buf, w: u32, h: u32, out: *Features, normal: bool) void {
         const g = self.g;
@@ -315,6 +354,7 @@ pub const Smi = struct {
             .w = w,
             .h = h,
             .normal = normal,
+            .mode = self.feat_mode,
             .feat = g.storage(@as(u64, n) * 16),
             .mag = g.storage(@as(u64, n) * 4),
             .acf = g.storage(289 * 4 * 4),
@@ -343,7 +383,9 @@ pub const Smi = struct {
             // normal-score powers, left unwhitened (the copula scores are written in them)
             self.run("feats_normal", (w + 7) / 8, (h + 7) / 8, 1, &.{ self.un(ub), self.rank.at(1), out.feat.at(4), out.mag.at(5) });
         } else {
-            self.run("feats", (w + 7) / 8, (h + 7) / 8, 1, &.{ self.un(ub), self.rank.at(1), out.feat.at(4), out.mag.at(5) });
+            var uf = ub;
+            uf.theme = @intFromEnum(self.feat_mode);
+            self.run("feats", (w + 7) / 8, (h + 7) / 8, 1, &.{ self.un(uf), self.rank.at(1), out.feat.at(4), out.mag.at(5) });
             // global ridge whitening
             self.run("feat_moments", 64, 1, 1, &.{ self.un(ub), out.feat.at(1), self.part.at(4) });
             self.run("finish_moments", 1, 1, 1, &.{ self.part.at(1), self.stats.at(4) });
@@ -360,6 +402,13 @@ pub const Smi = struct {
     /// Feature correlation area of a pair (px²) into pair_prm[0].
     pub fn pairArea(self: *Smi, a: *const Features, b: *const Features) void {
         self.run("corr_area", 1, 1, 1, &.{ self.un(.{ .w = 1, .h = 1, .plane = 0 }), a.acf.at(1), b.acf.at(2), self.pair_prm.at(4) });
+    }
+
+    /// The correlation plan of a map or sweep: three features leave the fourth's planes out (the
+    /// SMI scores only; the copula scores run on four normal-score powers).
+    pub fn planFor(self: *const Smi, exact: bool, smi_family: bool) *const CorrPlan {
+        const three = smi_family and self.feat_mode == .three;
+        return &self.plans[@as(usize, @intFromBool(three)) * 2 + @intFromBool(exact)];
     }
 
     fn capN(self: *Smi, plan: *const CorrPlan, cap0: u32) u32 {
@@ -434,7 +483,7 @@ pub const Smi = struct {
     fn packFft(self: *Smi, stack: Buf, w: u32, h: u32, nx: u32, ny: u32, cw: u32, ch: u32, dst: Buf, plan: *const CorrPlan, f: *fft.BatchFft, lp: ?LogPolar) void {
         const n_cplx = (plan.n_real + 1) / 2;
         const ub: U = .{
-            .w = w, .h = h, .n = nx, .gy = ny, .cw = cw, .ch = ch, .n_keys = plan.n_real, .theme = @intFromBool(lp != null),
+            .w = w, .h = h, .n = nx, .gy = ny, .cw = cw, .ch = ch, .n_keys = plan.n_real, .theme = @intFromBool(lp != null), .gx = plan.plane_mask,
             .mean = if (lp) |l| @floatCast(l.log0) else 0, .stdv = if (lp) |l| @floatCast(l.span) else 1,
         };
         // the stack on the grid once, then every correlation plane from it
@@ -450,7 +499,7 @@ pub const Smi = struct {
         const g = self.g;
         const nn: u64 = @as(u64, nx) * ny;
         const ncell: u32 = @intCast((nn + 255) / 256);
-        const pairs = self.pairs[@intFromBool(opt.planExact())];
+        const pairs = self.pairs[plan.id];
         var c0: u32 = 0;
         while (c0 < plan.n_out) : (c0 += IFFT_CHUNK) {
             const k = @min(IFFT_CHUNK, plan.n_out - c0);
@@ -462,7 +511,7 @@ pub const Smi = struct {
             }), self.work.at(1), pairs.at(3), self.corr.at(4) });
         }
         self.run1("combine_p", ncell, 1, &.{
-            self.un(.{ .w = nx, .h = ny, .n = nx, .gy = ny, .min_n = min_n, .gx = opt.mode(), .ridge = RIDGE, .theme = @intFromBool(opt.calib()), .plane = 0, .scale = @floatCast(area_scale) }),
+            self.un(.{ .w = nx, .h = ny, .n = nx, .gy = ny, .min_n = min_n, .gx = opt.mode(), .ridge = RIDGE, .theme = @intFromBool(opt.calib()), .plane = 0, .scale = @floatCast(area_scale), .n_keys = plan.nf }),
             self.corr.at(1),
             self.pair_prm.at(3),
             dst.at(4),
@@ -504,7 +553,7 @@ pub const Smi = struct {
         _ = a;
         _ = b;
         const g = self.g;
-        const plan = &self.plans[@intFromBool(opt.planExact())];
+        const plan = self.planFor(opt.planExact(), opt.mode() < 2);
         const nmc = if (opt.cap == 0) autoShiftPlan(fr.w, fr.h) else fft.linearCorrPlanRect(fr.w, fr.h, self.capN(plan, opt.cap), self.g.fft_sizes);
         const nx = nmc[0];
         const ny = nmc[1];
@@ -539,7 +588,7 @@ pub const Smi = struct {
 
     fn rsMapFrom(self: *Smi, fr: lie.Frame, c: [2]f64, r0_opt: ?f64, r1_opt: ?f64, opt: MapOptions, dst: *Buf) !RsPlan {
         const g = self.g;
-        const plan = &self.plans[@intFromBool(opt.planExact())];
+        const plan = self.planFor(opt.planExact(), opt.mode() < 2);
         const cx = c[0] - 1 - @as(f64, @floatFromInt(fr.ox));
         const cy = c[1] - 1 - @as(f64, @floatFromInt(fr.oy));
         var r1: f64 = 0;

@@ -6,6 +6,11 @@
 //! g = ∂S/∂sums (45) at G0, the Gauss–Newton weight Q (16) at Q0, a generic-score flag at FLAG.
 const std = @import("std");
 
+/// The SMI score's features: the rank r, r², the gradient magnitude |∇r| and a fourth: the
+/// Laplacian of r over 3 × 3, none (three features: 28 correlations per exact map instead of
+/// 45), or r³ (the original set).
+pub const SmiFeatures = enum(u32) { laplacian, three, cubic };
+
 pub const N_MOM = 45;
 pub const N_COEF = 102;
 pub const G0 = 40;

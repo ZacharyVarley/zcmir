@@ -1,4 +1,4 @@
-// SMI score: rank + Sobel features, one global 4×4 ridge whitening, then per overlap
+// SMI score: rank, gradient and Laplacian features, one global 4×4 ridge whitening, then per overlap
 //   global: n‖C‖²_F                      (C = overlap cross-covariance)
 //   exact:  n‖L_A⁻¹ C L_B⁻ᵀ‖²_F          (L = Cholesky of each overlap's own covariance)
 // One bind layout for the module. Entry points only touch the slots they need (auto layout).
@@ -446,10 +446,18 @@ fn feats(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_id) lid: v
     let g = sqrt(gx * gx + gy * gy);
     let i = gid.y * u.w + gid.x;
     let n = hw();
+    // The fourth feature (u.theme, moments.zig SmiFeatures): 0 the Laplacian over 3 × 3, 1 none
+    // (a zero plane drops out of the whitened score), 2 r³ (the original set).
+    var f3 = 0.0;
+    if (u.theme == 0u) {
+        f3 = tile_at(lx, ly, -1, 0) + tile_at(lx, ly, 1, 0) + tile_at(lx, ly, 0, -1) + tile_at(lx, ly, 0, 1) - 4.0 * r;
+    } else if (u.theme == 2u) {
+        f3 = r * r * r;
+    }
     out_a[i] = r;
     out_a[n + i] = r * r;
-    out_a[2u * n + i] = r * r * r;
-    out_a[3u * n + i] = g;
+    out_a[2u * n + i] = g;
+    out_a[3u * n + i] = f3;
     out_b[i] = g;
 }
 
@@ -640,7 +648,21 @@ fn real_plane(r: u32, s: array<f32, 5>) -> f32 {
     return s[1u + tri_i(k)] * s[1u + tri_j(k)] / s[0];
 }
 
-// Two real planes per complex FFT input: plane 2z in re, 2z+1 in im.
+// Real plane held in slot `slot` of a plan that keeps the planes in `mask` (0: every plane, slot
+// = plane): the slot-th set bit. Three features leave out every plane of the fourth.
+fn slot_plane(slot: u32, mask: u32) -> u32 {
+    if (mask == 0u) { return slot; }
+    var seen = 0u;
+    for (var p = 0u; p < 15u; p++) {
+        if ((mask & (1u << p)) != 0u) {
+            if (seen == slot) { return p; }
+            seen++;
+        }
+    }
+    return 0u;
+}
+
+// Two real planes per complex FFT input: plane 2z in re, 2z+1 in im (u.gx: slot_plane's mask).
 // u.n_keys = number of real planes (5 global, 15 exact). u.theme == 1: log-polar
 // grid, every plane × ρ so correlations integrate with the area element.
 // A source wider than the grid is box-filtered over each cell's footprint
@@ -699,8 +721,8 @@ fn pack_pair(@builtin(global_invocation_id) gid: vec3u) {
         var om = 1.0;
         if (u.theme == 1u) { om = exp(u.mean + (f32(gid.y) + 0.5) / f32(max(u.ch, 1u)) * u.stdv); }
         let r0 = gid.z * 2u;
-        re = om * real_plane(r0, s);
-        if (r0 + 1u < u.n_keys) { im = om * real_plane(r0 + 1u, s); }
+        re = om * real_plane(slot_plane(r0, u.gx), s);
+        if (r0 + 1u < u.n_keys) { im = om * real_plane(slot_plane(r0 + 1u, u.gx), s); }
     }
     out_a[i] = re; out_a[i + 1u] = im;
 }
@@ -803,10 +825,12 @@ fn f_to_z(f: f32, d1: f32, d2: f32) -> f32 {
 // Per-shift score from the correlation planes. u.gx == 1: exact (local whitening).
 // u.theme == 1 (exact only): calibrated. n_eff = n / A with A = u.mean the feature
 // correlation area in grid cells, and the score is the Wilson–Hilferty z of
-// Pillai's F-approximation for V = Σρ² (p = q = 4):
-//   F = ((n_eff − 5) / 4) · V / (4 − V),  F ~ F(16, 4(n_eff − 5)) under independence.
+// Pillai's F-approximation for V = Σρ² (p = q = nf features):
+//   F = ((n_eff − nf − 1) / nf) · V / (nf − V),  F ~ F(nf², nf (n_eff − nf − 1)) under independence.
 // Overlaps with n_eff ≤ 10 score 0; this replaces the 8 % zero-lag floor.
+// u.n_keys: nf when a plan leaves the fourth feature's planes out (0: four features).
 fn combine_cell(t: u32, area: f32) {
+    let nf = select(4u, u.n_keys, u.n_keys != 0u);
     let nn = map_w() * map_h();
     let n = corr_at(0u, t, nn);
     let calib = u.gx == 1u && u.theme == 1u;
@@ -825,14 +849,14 @@ fn combine_cell(t: u32, area: f32) {
     }
     var ma: array<f32, 4>;
     var mb: array<f32, 4>;
-    for (var i = 0u; i < 4u; i++) {
+    for (var i = 0u; i < nf; i++) {
         ma[i] = corr_at(1u + i, t, nn) / den;
         mb[i] = corr_at(5u + i, t, nn) / den;
     }
     if (u.gx == 0u) {
         var s = 0.0;
-        for (var i = 0u; i < 4u; i++) {
-            for (var j = 0u; j < 4u; j++) {
+        for (var i = 0u; i < nf; i++) {
+            for (var j = 0u; j < nf; j++) {
                 let cij = clamp(corr_at(9u + i * 4u + j, t, nn) / den - ma[i] * mb[j], -1.0, 1.0);
                 s = s + cij * cij;
             }
@@ -844,8 +868,8 @@ fn combine_cell(t: u32, area: f32) {
     var gb: array<f32, 16>;
     var tra = 0.0;
     var trb = 0.0;
-    for (var i = 0u; i < 4u; i++) {
-        for (var j = 0u; j < 4u; j++) {
+    for (var i = 0u; i < nf; i++) {
+        for (var j = 0u; j < nf; j++) {
             let k = tri_k(i, j);
             ga[i * 4u + j] = corr_at(25u + k, t, nn) / den - ma[i] * ma[j];
             gb[i * 4u + j] = corr_at(35u + k, t, nn) / den - mb[i] * mb[j];
@@ -853,15 +877,17 @@ fn combine_cell(t: u32, area: f32) {
         tra = tra + ga[i * 5u];
         trb = trb + gb[i * 5u];
     }
-    for (var i = 0u; i < 4u; i++) {
+    for (var i = 0u; i < nf; i++) {
         ga[i * 5u] = ga[i * 5u] + u.ridge * max(tra * 0.25, 1e-12);
         gb[i * 5u] = gb[i * 5u] + u.ridge * max(trb * 0.25, 1e-12);
     }
+    // (the unused rows of a three-feature score: the identity)
+    for (var i = nf; i < 4u; i++) { ga[i * 5u] = 1.0; gb[i * 5u] = 1.0; }
     if (!chol4(&ga) || !chol4(&gb)) { out_a[t] = 0.0; return; }
     // X = L_A⁻¹ C (forward substitution down each column of C).
     var x: array<f32, 16>;
-    for (var j = 0u; j < 4u; j++) {
-        for (var i = 0u; i < 4u; i++) {
+    for (var j = 0u; j < nf; j++) {
+        for (var i = 0u; i < nf; i++) {
             var s = corr_at(9u + i * 4u + j, t, nn) / den - ma[i] * mb[j];
             for (var k = 0u; k < i; k++) { s = s - ga[i * 4u + k] * x[k * 4u + j]; }
             x[i * 4u + j] = s / ga[i * 5u];
@@ -869,9 +895,9 @@ fn combine_cell(t: u32, area: f32) {
     }
     // Y = X L_B⁻ᵀ: each row y solves L_B yᵀ = xᵀ. Accumulate ‖Y‖² as we go.
     var acc = 0.0;
-    for (var r = 0u; r < 4u; r++) {
+    for (var r = 0u; r < nf; r++) {
         var y: array<f32, 4>;
-        for (var i = 0u; i < 4u; i++) {
+        for (var i = 0u; i < nf; i++) {
             var s = x[r * 4u + i];
             for (var k = 0u; k < i; k++) { s = s - gb[i * 4u + k] * y[k]; }
             y[i] = s / gb[i * 5u];
@@ -880,9 +906,10 @@ fn combine_cell(t: u32, area: f32) {
     }
     var score = n * acc;
     if (calib) {
-        let v = min(acc, 4.0 - 1e-4);
-        let f = (neff - 5.0) * 0.25 * v / (4.0 - v);
-        score = max(f_to_z(f, 16.0, 4.0 * (neff - 5.0)), 0.0);
+        let q = f32(nf);
+        let v = min(acc, q - 1e-4);
+        let f = (neff - q - 1.0) / q * v / (q - v);
+        score = max(f_to_z(f, q * q, q * (neff - q - 1.0)), 0.0);
     }
     out_a[t] = select(0.0, score, score == score);
 }
